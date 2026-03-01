@@ -5,6 +5,8 @@ import { createRoot } from 'react-dom/client';
 import '../css/app.css';
 import { initializeTheme } from '@/hooks/use-appearance';
 
+import '@/lib/locales/i18n';
+
 const appName = import.meta.env.VITE_APP_NAME || 'Fopis';
 
 createInertiaApp({
