@@ -23,11 +23,14 @@ class GardenController extends Controller
         $gardens = Garden::with(['members.user'])
             ->whereHas('members', fn($q) => $q->where('user_id', Auth::user()->id))
             ->withCount('plants')
-            ->when($search, fn($q) =>
-                $q->where(fn($q) =>
+            ->when(
+                $search,
+                fn($q) =>
+                $q->where(
+                    fn($q) =>
                     $q->where('name', 'like', "%{$search}%")
-                      ->orWhere('location', 'like', "%{$search}%")
-                      ->orWhere('description', 'like', "%{$search}%")
+                        ->orWhere('location', 'like', "%{$search}%")
+                        ->orWhere('description', 'like', "%{$search}%")
                 )
             )
             ->latest()
@@ -108,13 +111,39 @@ class GardenController extends Controller
             ->with('success', 'Garden created successfully.');
     }
 
-    public function show(Garden $garden): Response
+    public function show(Request $request, Garden $garden): Response
     {
         $this->authorizeGarden($garden);
-        $garden->load(['members.user', 'plants']);
+
+        $search  = $request->input('search');
+        $perPage = (int) $request->input('per_page', 50);
+        $perPage = in_array($perPage, [25, 50, 100, 200]) ? $perPage : 50;
+
+        $plants = $garden->plants()
+            ->when(
+                $search,
+                fn($q) =>
+                $q->where(
+                    fn($inner) =>
+                    $inner->where('plant_code', 'like', "%{$search}%")
+                        ->orWhere('variety', 'like', "%{$search}%")
+                        ->orWhere('block', 'like', "%{$search}%")
+                        ->orWhere('status', 'like', "%{$search}%")
+                )
+            )
+            ->latest()
+            ->paginate($perPage)
+            ->withQueryString();
+
+        $garden->load('members.user');
 
         return Inertia::render('garden/show', [
-            'garden' => $this->appendGeoJson($garden),
+            'garden'  => $this->appendGeoJson($garden),
+            'plants'  => $plants,
+            'filters' => [
+                'search'   => $search,
+                'per_page' => $perPage,
+            ],
         ]);
     }
 

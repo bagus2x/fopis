@@ -15,7 +15,13 @@ import { dashboard } from '@/routes';
 import garden from '@/routes/garden';
 import type { NavItem } from '@/types';
 import { Link } from '@inertiajs/react';
-import { BookOpen, FolderGit2, LayoutGrid, TreesIcon } from 'lucide-react';
+import {
+    BookOpen,
+    FolderGit2,
+    HelpCircleIcon,
+    LayoutGrid,
+    TreesIcon,
+} from 'lucide-react';
 
 const mainNavItems: NavItem[] = [
     {
@@ -32,13 +38,13 @@ const mainNavItems: NavItem[] = [
 
 const footerNavItems: NavItem[] = [
     {
-        title: 'Repository',
-        href: 'https://github.com/laravel/react-starter-kit',
-        icon: FolderGit2,
+        title: 'Help Desk',
+        href: '#',
+        icon: HelpCircleIcon,
     },
     {
         title: 'Documentation',
-        href: 'https://laravel.com/docs/starter-kits#react',
+        href: '#',
         icon: BookOpen,
     },
 ];

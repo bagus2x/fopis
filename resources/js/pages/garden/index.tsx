@@ -223,9 +223,12 @@ function GardenCard({ g, userRole }: { g: Garden; userRole?: string }) {
             {/* Body */}
             <div className="flex flex-1 flex-col gap-2.5 p-4">
                 <div>
-                    <h3 className="truncate text-sm leading-snug font-semibold">
+                    <Link
+                        href={garden.show(g.id)}
+                        className="truncate text-sm leading-snug font-semibold"
+                    >
                         {g.name}
-                    </h3>
+                    </Link>
                     {g.description && (
                         <p className="mt-0.5 line-clamp-2 text-[12px] text-muted-foreground">
                             {g.description}
