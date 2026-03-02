@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Select environment'
+        description: Environment
         required: true
         type: choice
         options:
@@ -25,40 +25,55 @@ jobs:
       ########################################
       # Install Node
       ########################################
-      - run: |
+      - name: Install Node 20
+        run: |
           curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
           sudo apt install -y nodejs
 
       ########################################
       # Install PHP 8.5
       ########################################
-      - run: |
+      - name: Install PHP 8.5
+        run: |
           sudo add-apt-repository ppa:ondrej/php -y
           sudo apt update
+
           sudo apt install -y \
-            php8.5 php8.5-cli php8.5-mbstring php8.5-intl \
-            php8.5-mysql php8.5-sqlite3 php8.5-bcmath \
-            php8.5-gd php8.5-xml unzip curl rsync
+          php8.5 php8.5-cli php8.5-mbstring php8.5-intl \
+          php8.5-mysql php8.5-sqlite3 php8.5-bcmath \
+          php8.5-gd php8.5-xml unzip curl rsync
 
       ########################################
       # Install Composer
       ########################################
-      - run: |
+      - name: Install Composer
+        run: |
           curl -sS https://getcomposer.org/installer -o composer-setup.php
           php composer-setup.php --install-dir=/usr/local/bin --filename=composer
 
       ########################################
-      # Install Dependencies (BUILD ONLY)
+      # Install Backend Dependencies
       ########################################
-      - run: |
-          composer install --no-dev --optimize-autoloader
-          npm install
-          npm run build
+      - name: Composer Install
+        run: composer install --no-dev --optimize-autoloader
 
       ########################################
-      # Optimize Laravel
+      # Install Frontend Dependencies
       ########################################
-      - run: |
+      - name: NPM Install
+        run: npm install
+
+      ########################################
+      # Build Vite (Inertia)
+      ########################################
+      - name: Build Frontend Assets
+        run: npm run build
+
+      ########################################
+      # Laravel Optimize
+      ########################################
+      - name: Laravel Optimize
+        run: |
           php artisan config:cache || true
           php artisan route:cache || true
           php artisan view:cache || true
@@ -66,40 +81,66 @@ jobs:
       ########################################
       # Prepare Deploy Package
       ########################################
-      - run: |
+      - name: Prepare Deploy Folder
+        run: |
           mkdir deploy
-          rsync -av . deploy \
-            --exclude .git \
-            --exclude .github \
-            --exclude tests \
-            --exclude node_modules \
-            --exclude .env
 
-      - uses: actions/upload-artifact@v4
+          rsync -av . deploy \
+          --exclude .git \
+          --exclude .github \
+          --exclude tests \
+          --exclude node_modules \
+          --exclude deploy \
+          --exclude .env
+
+      ########################################
+      # Upload Artifact
+      ########################################
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
           name: deploy-package
           path: deploy/
+          retention-days: 3
 
   deploy:
-    if: github.event_name == 'workflow_dispatch'
     needs: build
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
 
     steps:
-      - uses: actions/download-artifact@v4
+      ########################################
+      # Download Artifact
+      ########################################
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
         with:
           name: deploy-package
-          path: ./deploy
+          path: deploy
 
-      - name: Install FTP
+      ########################################
+      # Install FTP Client
+      ########################################
+      - name: Install lftp
         run: sudo apt install -y lftp
 
-      - name: Upload to cPanel
+      ########################################
+      # Deploy FTP (FIXED SYNTAX 🔥)
+      ########################################
+      - name: Deploy to cPanel FTP
+        env:
+          FTP_USERNAME: ${{ vars.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ vars.FTP_PASSWORD }}
+          FTP_SERVER: ${{ vars.FTP_SERVER }}
+          FTP_DIR: ${{ vars.FTP_DIR }}
+
         run: |
-          lftp -c "
+          lftp -e "
           set ssl:verify-certificate no;
-          open -u ${{ vars.FTP_USERNAME }},${{ vars.FTP_PASSWORD }} ${{ vars.FTP_SERVER }};
-          mirror -R deploy/ ${{ vars.FTP_DIR }} --delete --verbose;
+          open ftp://${FTP_USERNAME}:${FTP_PASSWORD}@${FTP_SERVER};
+
+          mirror -R deploy ${FTP_DIR} --delete --verbose;
+
           quit
           "
