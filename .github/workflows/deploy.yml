@@ -1,42 +1,52 @@
-name: Laravel Deploy (ZIP Fast Method)
+name: Laravel Deploy (ZIP + SSH)
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Select Environment
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
 
     steps:
       ########################################
-      # Test SSH Connection First
+      # 1. Test SSH Connection First
       ########################################
       - name: Test SSH Connection
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ vars.SSH_HOST }}
-          username: ${{ vars.SSH_USER }}
-          key: ${{ vars.SSH_PRIVATE_KEY }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            echo "SSH connection successful ✅"
+            echo "✅ SSH Connected"
             whoami
             pwd
 
       ########################################
-      # Checkout
+      # 2. Checkout Repository
       ########################################
       - uses: actions/checkout@v4
 
       ########################################
-      # Setup PHP
+      # 3. Setup PHP
       ########################################
       - uses: shivammathur/setup-php@v2
         with:
           php-version: 8.2
           extensions: mbstring, intl, bcmath, mysql, gd, xml
+          coverage: none
 
       ########################################
-      # Cache Vendor
+      # 4. Cache Vendor
       ########################################
       - uses: actions/cache@v4
         with:
@@ -44,26 +54,28 @@ jobs:
           key: composer-${{ hashFiles('composer.lock') }}
 
       ########################################
-      # Install Dependencies
+      # 5. Install Backend Dependencies
       ########################################
-      - run: composer install --no-dev --optimize-autoloader
+      - name: Composer Install
+        run: composer install --no-dev --optimize-autoloader
 
       ########################################
-      # Setup Node
+      # 6. Setup Node
       ########################################
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
       ########################################
-      # Build Frontend
+      # 7. Build Frontend Assets
       ########################################
-      - run: |
+      - name: Build Assets
+        run: |
           npm install
           npm run build
 
       ########################################
-      # Create ZIP
+      # 8. Create Deployment ZIP
       ########################################
       - name: Create Deployment ZIP
         run: |
@@ -75,32 +87,36 @@ jobs:
                ".env"
 
       ########################################
-      # Upload ZIP
+      # 9. Upload ZIP to Server
       ########################################
       - name: Upload ZIP
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ vars.SSH_HOST }}
-          username: ${{ vars.SSH_USER }}
-          key: ${{ vars.SSH_PRIVATE_KEY }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: 'deploy.zip'
-          target: '${{ vars.SSH_PATH }}'
+          target: '${{ secrets.SSH_PATH }}'
 
       ########################################
-      # Extract + Cleanup
+      # 10. Extract & Optimize on Server
       ########################################
-      - name: Extract on Server
+      - name: Extract & Optimize
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ vars.SSH_HOST }}
-          username: ${{ vars.SSH_USER }}
-          key: ${{ vars.SSH_PRIVATE_KEY }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd ${{ vars.SSH_PATH }}
+            cd ${{ secrets.SSH_PATH }}
+
             unzip -o deploy.zip
             rm deploy.zip
 
             php artisan migrate --force || true
+            php artisan config:clear || true
             php artisan config:cache || true
             php artisan route:cache || true
             php artisan view:cache || true
+
+            echo "🚀 Deploy Finished Successfully"
