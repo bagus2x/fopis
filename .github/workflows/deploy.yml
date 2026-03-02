@@ -1,115 +1,92 @@
-name: Laravel Inertia Manual Deploy
+name: Laravel Deploy (ZIP Fast Method)
 
 on:
   workflow_dispatch:
-    inputs:
-      environment:
-        description: Environment
-        required: true
-        type: choice
-        options:
-          - dev
-          - prod
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
 
     steps:
       ########################################
-      # Checkout Code
+      # Checkout
       ########################################
       - uses: actions/checkout@v4
 
       ########################################
-      # Install Node
+      # Setup PHP
       ########################################
-      - name: Install Node 20
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: mbstring, intl, bcmath, mysql, gd, xml
+
+      ########################################
+      # Cache Vendor
+      ########################################
+      - uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+
+      ########################################
+      # Install Dependencies
+      ########################################
+      - run: composer install --no-dev --optimize-autoloader
+
+      ########################################
+      # Setup Node
+      ########################################
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      ########################################
+      # Build Frontend
+      ########################################
+      - run: |
+          npm install
+          npm run build
+
+      ########################################
+      # Create ZIP
+      ########################################
+      - name: Create Deployment ZIP
         run: |
-          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-          sudo apt install -y nodejs
+          zip -r deploy.zip . \
+            -x ".git/*" ".github/*" \
+               "node_modules/*" \
+               "tests/*" \
+               "storage/*" \
+               ".env"
 
       ########################################
-      # Install PHP 8.5
+      # Upload ZIP
       ########################################
-      - name: Install PHP 8.5
-        run: |
-          sudo add-apt-repository ppa:ondrej/php -y
-          sudo apt update
-
-          sudo apt install -y \
-          php8.5 php8.5-cli php8.5-mbstring php8.5-intl \
-          php8.5-mysql php8.5-sqlite3 php8.5-bcmath \
-          php8.5-gd php8.5-xml unzip curl rsync lftp
-
-      ########################################
-      # Install Composer
-      ########################################
-      - name: Install Composer
-        run: |
-          curl -sS https://getcomposer.org/installer -o composer-setup.php
-          php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+      - name: Upload ZIP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ vars.SSH_HOST }}
+          username: ${{ vars.SSH_USER }}
+          key: ${{ vars.SSH_PRIVATE_KEY }}
+          source: 'deploy.zip'
+          target: '${{ vars.SSH_PATH }}'
 
       ########################################
-      # Install Backend Dependencies
+      # Extract + Cleanup
       ########################################
-      - name: Composer Install
-        run: composer install --no-dev --optimize-autoloader
+      - name: Extract on Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ vars.SSH_HOST }}
+          username: ${{ vars.SSH_USER }}
+          key: ${{ vars.SSH_PRIVATE_KEY }}
+          script: |
+            cd ${{ vars.SSH_PATH }}
+            unzip -o deploy.zip
+            rm deploy.zip
 
-      ########################################
-      # Install Frontend Dependencies
-      ########################################
-      - name: NPM Install
-        run: npm install
-
-      ########################################
-      # Build Vite (Inertia Mandatory)
-      ########################################
-      - name: Build Frontend Assets
-        run: npm run build
-
-      ########################################
-      # Laravel Optimization
-      ########################################
-      - name: Laravel Optimize Cache
-        run: |
-          php artisan config:cache || true
-          php artisan route:cache || true
-          php artisan view:cache || true
-
-      ########################################
-      # Prepare Deploy Folder
-      ########################################
-      - name: Prepare Deploy Package
-        run: |
-          mkdir deploy
-
-          rsync -av . deploy \
-          --exclude .git \
-          --exclude .github \
-          --exclude node_modules \
-          --exclude tests \
-          --exclude deploy \
-          --exclude .env
-
-      ########################################
-      # Deploy FTP cPanel
-      ########################################
-      - name: Deploy to FTP Server
-        env:
-          FTP_USERNAME: ${{ vars.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ vars.FTP_PASSWORD }}
-          FTP_SERVER: ${{ vars.FTP_SERVER }}
-          FTP_DIR: ${{ vars.FTP_DIR }}
-
-        run: |
-          lftp -c "
-          set ssl:verify-certificate no;
-
-          open ftp://${FTP_USERNAME}:${FTP_PASSWORD}@${FTP_SERVER};
-
-          mirror -R deploy ${FTP_DIR} --delete --verbose;
-
-          quit
-          "
+            php artisan migrate --force || true
+            php artisan config:cache || true
+            php artisan route:cache || true
+            php artisan view:cache || true
