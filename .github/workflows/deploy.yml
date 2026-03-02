@@ -1,10 +1,6 @@
-name: Laravel Inertia CI/CD
+name: Laravel Inertia Manual Deploy
 
 on:
-  push:
-    branches:
-      - main
-
   workflow_dispatch:
     inputs:
       environment:
@@ -16,10 +12,14 @@ on:
           - prod
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
 
     steps:
+      ########################################
+      # Checkout Code
+      ########################################
       - uses: actions/checkout@v4
 
       ########################################
@@ -41,7 +41,7 @@ jobs:
           sudo apt install -y \
           php8.5 php8.5-cli php8.5-mbstring php8.5-intl \
           php8.5-mysql php8.5-sqlite3 php8.5-bcmath \
-          php8.5-gd php8.5-xml unzip curl rsync
+          php8.5-gd php8.5-xml unzip curl rsync lftp
 
       ########################################
       # Install Composer
@@ -64,71 +64,39 @@ jobs:
         run: npm install
 
       ########################################
-      # Build Vite (Inertia)
+      # Build Vite (Inertia Mandatory)
       ########################################
       - name: Build Frontend Assets
         run: npm run build
 
       ########################################
-      # Laravel Optimize
+      # Laravel Optimization
       ########################################
-      - name: Laravel Optimize
+      - name: Laravel Optimize Cache
         run: |
           php artisan config:cache || true
           php artisan route:cache || true
           php artisan view:cache || true
 
       ########################################
-      # Prepare Deploy Package
+      # Prepare Deploy Folder
       ########################################
-      - name: Prepare Deploy Folder
+      - name: Prepare Deploy Package
         run: |
           mkdir deploy
 
           rsync -av . deploy \
           --exclude .git \
           --exclude .github \
-          --exclude tests \
           --exclude node_modules \
+          --exclude tests \
           --exclude deploy \
           --exclude .env
 
       ########################################
-      # Upload Artifact
+      # Deploy FTP cPanel
       ########################################
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deploy-package
-          path: deploy/
-          retention-days: 3
-
-  deploy:
-    needs: build
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-
-    steps:
-      ########################################
-      # Download Artifact
-      ########################################
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: deploy-package
-          path: deploy
-
-      ########################################
-      # Install FTP Client
-      ########################################
-      - name: Install lftp
-        run: sudo apt install -y lftp
-
-      ########################################
-      # Deploy FTP (FIXED SYNTAX 🔥)
-      ########################################
-      - name: Deploy to cPanel FTP
+      - name: Deploy to FTP Server
         env:
           FTP_USERNAME: ${{ vars.FTP_USERNAME }}
           FTP_PASSWORD: ${{ vars.FTP_PASSWORD }}
@@ -136,8 +104,9 @@ jobs:
           FTP_DIR: ${{ vars.FTP_DIR }}
 
         run: |
-          lftp -e "
+          lftp -c "
           set ssl:verify-certificate no;
+
           open ftp://${FTP_USERNAME}:${FTP_PASSWORD}@${FTP_SERVER};
 
           mirror -R deploy ${FTP_DIR} --delete --verbose;
