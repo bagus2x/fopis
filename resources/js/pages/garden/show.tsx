@@ -5,6 +5,7 @@ import { Head, Link, router, useForm } from '@inertiajs/react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -26,6 +27,18 @@ import {
 } from '@/components/ui/drawer';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from '@/components/ui/popover';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import {
     Table,
@@ -35,6 +48,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
 import {
     Tooltip,
     TooltipContent,
@@ -45,6 +59,7 @@ import { ImageUpload } from '@/components/image-upload';
 import { cn } from '@/lib/utils';
 import {
     CalendarDays,
+    CalendarIcon,
     ChevronLeft,
     ChevronRight,
     Crosshair,
@@ -53,12 +68,15 @@ import {
     LayoutList,
     Leaf,
     Loader2,
+    LocateFixed,
     Map as MapIcon,
     MapPin,
     Pencil,
     Plus,
     Search,
     Sprout,
+    Trash2,
+    X,
 } from 'lucide-react';
 import {
     ReactNode,
@@ -71,7 +89,11 @@ import {
 } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { svgMarker } from '@/pages/garden/lib/utils';
+import { useTranslation } from 'react-i18next';
+import { format, parse, isValid } from 'date-fns';
+import { markerAlive, markerDead } from '@/pages/garden/lib/utils';
+
+// ─── Interfaces ──────────────────────────────────────────────────────────────
 
 interface GardenMember {
     id: number;
@@ -95,11 +117,13 @@ interface Plant {
     status: string | null;
     status_change_date: string | null;
     status_change_reason: string | null;
+    planting_replacement: string | null;
     parent_tree_type: string | null;
     parent_tree_class: string | null;
     registration_number: string | null;
     parent_tree_notes: string | null;
     image_url?: string | null;
+    image_path?: string | null;
 }
 
 interface PlantCoord {
@@ -142,11 +166,18 @@ interface Props {
     filters: { search?: string; per_page?: number };
 }
 
+// Coord-picking callback ref type
+type PickingCallback = ((coords: [number, number]) => void) | null;
+
 interface ClusteredMapHandle {
     refreshPlants: () => Promise<void>;
     flyTo: (coords: [number, number], zoom?: number) => void;
     addMarker: (coords: [number, number]) => void;
+    startPickingCoord: (cb: (coords: [number, number]) => void) => void;
+    stopPickingCoord: () => void;
 }
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeBreadcrumbs(g: GardenDetail): BreadcrumbItem[] {
     return [
@@ -171,8 +202,9 @@ function initials(name: string) {
         .toUpperCase();
 }
 
-function formatDate(iso: string) {
-    return new Date(iso).toLocaleDateString('en-US', {
+function formatDate(iso: string | null | undefined) {
+    if (!iso) return null;
+    return new Date(iso).toLocaleDateString('id-ID', {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
@@ -199,11 +231,12 @@ function getRoleBadge(role: string) {
 function getStatusCls(status: string | null): string {
     if (!status) return 'bg-muted text-muted-foreground border-border';
     const map: Record<string, string> = {
+        alive: 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800',
         active: 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800',
-        inactive: 'bg-muted text-muted-foreground border-border',
+        dead: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800',
         removed:
-            'bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300',
-        dead: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300',
+            'bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800',
+        inactive: 'bg-muted text-muted-foreground border-border',
     };
     return (
         map[status.toLowerCase()] ??
@@ -223,8 +256,174 @@ function InfoRow({ label, value }: { label: string; value: ReactNode }) {
     );
 }
 
+// ─── SVG marker builders ──────────────────────────────────────────────────────
+
+function buildSproutSvg(fill: string): string {
+    return [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">`,
+        `<circle cx="16" cy="16" r="16" fill="${fill}"/>`,
+        `<g transform="translate(4,4) scale(0.667)" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">`,
+        `<path d="M14 9.536V7a4 4 0 0 1 4-4h1.5a.5.5 0 0 1 .5.5V5a4 4 0 0 1-4 4 4 4 0 0 0-4 4c0 2 1 3 1 5a5 5 0 0 1-1 3"/>`,
+        `<path d="M4 9a5 5 0 0 1 8 4 5 5 0 0 1-8-4"/>`,
+        `<path d="M5 21h14"/>`,
+        `</g></svg>`,
+    ].join('');
+}
+
+async function loadMapImage(
+    map: maplibregl.Map,
+    name: string,
+    svg: string,
+): Promise<void> {
+    return new Promise<void>((resolve) => {
+        const size = 32;
+        const img = new Image();
+        img.onload = () => {
+            if (!map.hasImage(name)) {
+                map.addImage(name, img, { pixelRatio: 2 });
+            }
+            resolve();
+        };
+        img.onerror = () => resolve();
+        img.src = 'data:image/svg+xml,' + encodeURIComponent(svg);
+    });
+}
+
+// ─── DatePicker helper ────────────────────────────────────────────────────────
+
+function DatePickerField({
+    label,
+    value,
+    onChange,
+    className,
+}: {
+    label: string;
+    value: string;
+    onChange: (val: string) => void;
+    className?: string;
+}) {
+    const [open, setOpen] = useState(false);
+    const parsed = value ? parse(value, 'yyyy-MM-dd', new Date()) : undefined;
+    const selected = parsed && isValid(parsed) ? parsed : undefined;
+
+    return (
+        <div className={cn('grid gap-1.5', className)}>
+            <Label className="text-xs">{label}</Label>
+            <Popover open={open} onOpenChange={setOpen}>
+                <PopoverTrigger asChild>
+                    <Button
+                        variant="outline"
+                        className={cn(
+                            'h-8 justify-start gap-2 text-left text-sm font-normal',
+                            !selected && 'text-muted-foreground',
+                        )}
+                    >
+                        <CalendarIcon className="h-3.5 w-3.5 shrink-0" />
+                        {selected ? (
+                            format(selected, 'dd MMM yyyy')
+                        ) : (
+                            <span>Pilih tanggal</span>
+                        )}
+                    </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                        mode="single"
+                        selected={selected}
+                        onSelect={(d) => {
+                            onChange(d ? format(d, 'yyyy-MM-dd') : '');
+                            setOpen(false);
+                        }}
+                        initialFocus
+                    />
+                </PopoverContent>
+            </Popover>
+        </div>
+    );
+}
+
+// ─── Plant form data ──────────────────────────────────────────────────────────
+
+interface PlantFormData {
+    plant_code: string;
+    variety: string;
+    block: string;
+    sub_block: string;
+    latitude: string;
+    longitude: string;
+    planting_year: string;
+    propagation_method: string;
+    rootstock: string;
+    seed_origin: string;
+    description: string;
+    status: string;
+    status_change_date: string;
+    status_change_reason: string;
+    planting_replacement: string;
+    parent_tree_type: string;
+    parent_tree_class: string;
+    registration_number: string;
+    parent_tree_notes: string;
+    image: File | null;
+    remove_image: boolean;
+}
+
+const EMPTY_FORM: PlantFormData = {
+    plant_code: '',
+    variety: '',
+    block: '',
+    sub_block: '',
+    latitude: '',
+    longitude: '',
+    planting_year: '',
+    propagation_method: '',
+    rootstock: '',
+    seed_origin: '',
+    description: '',
+    status: '',
+    status_change_date: '',
+    status_change_reason: '',
+    planting_replacement: '',
+    parent_tree_type: '',
+    parent_tree_class: '',
+    registration_number: '',
+    parent_tree_notes: '',
+    image: null,
+    remove_image: false,
+};
+
+function plantToForm(p: Plant): PlantFormData {
+    return {
+        plant_code: p.plant_code,
+        variety: p.variety ?? '',
+        block: p.block ?? '',
+        sub_block: p.sub_block ?? '',
+        latitude: p.latitude ?? '',
+        longitude: p.longitude ?? '',
+        planting_year: p.planting_year ? String(p.planting_year) : '',
+        propagation_method: p.propagation_method ?? '',
+        rootstock: p.rootstock ?? '',
+        seed_origin: p.seed_origin ?? '',
+        description: p.description ?? '',
+        status: p.status ?? '',
+        status_change_date: p.status_change_date ?? '',
+        status_change_reason: p.status_change_reason ?? '',
+        planting_replacement: p.planting_replacement ?? '',
+        parent_tree_type: p.parent_tree_type ?? '',
+        parent_tree_class: p.parent_tree_class ?? '',
+        registration_number: p.registration_number ?? '',
+        parent_tree_notes: p.parent_tree_notes ?? '',
+        image: null,
+        remove_image: false,
+    };
+}
+
+// ─── GardenInfoPanel ─────────────────────────────────────────────────────────
+
 function GardenInfoPanel({ g }: { g: GardenDetail }) {
+    const { t } = useTranslation(['garden', 'common']);
     const myRole = g.members[0];
+
     return (
         <div className="flex h-full flex-col overflow-y-auto">
             {g.image_url ? (
@@ -234,7 +433,7 @@ function GardenInfoPanel({ g }: { g: GardenDetail }) {
                         alt={g.name}
                         className="h-full w-full object-cover"
                     />
-                    <div className="absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-green-500 to-emerald-400" />
+                    <div className="absolute inset-x-0 bottom-0 h-0.5 bg-linear-to-r from-green-500 to-emerald-400" />
                 </div>
             ) : (
                 <div className="flex h-20 w-full shrink-0 items-center justify-center border-b bg-muted/20">
@@ -269,34 +468,37 @@ function GardenInfoPanel({ g }: { g: GardenDetail }) {
                         </Badge>
                     )}
                 </div>
+
                 {g.description && (
                     <p className="text-xs leading-relaxed text-muted-foreground">
                         {g.description}
                     </p>
                 )}
+
                 <div className="grid grid-cols-2 gap-2">
                     <div className="rounded-lg border bg-muted/20 px-3 py-2">
                         <p className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-                            Area
+                            {t('garden:common.area')}
                         </p>
                         <p className="mt-0.5 text-sm font-semibold">
                             {g.area_hectares
-                                ? `${parseFloat(g.area_hectares).toFixed(2)} ha`
+                                ? `${parseFloat(g.area_hectares).toFixed(2)} ${t('garden:common.areaUnit', 'ha')}`
                                 : '—'}
                         </p>
                     </div>
                     <div className="rounded-lg border bg-muted/20 px-3 py-2">
                         <p className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-                            Members
+                            {t('garden:common.members')}
                         </p>
                         <p className="mt-0.5 text-sm font-semibold">
                             {g.members.length}
                         </p>
                     </div>
                 </div>
+
                 <div>
                     <p className="mb-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-                        Team
+                        {t('garden:show.team')}
                     </p>
                     <div className="flex flex-col gap-1.5">
                         {g.members.map((m) => {
@@ -333,10 +535,12 @@ function GardenInfoPanel({ g }: { g: GardenDetail }) {
                         })}
                     </div>
                 </div>
+
                 <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                     <CalendarDays className="h-3 w-3 shrink-0" />
-                    Created {formatDate(g.created_at)}
+                    {t('common:created')} {formatDate(g.created_at)}
                 </div>
+
                 {(myRole?.role === 'OWNER' || myRole?.role === 'MANAGER') && (
                     <Button
                         asChild
@@ -345,7 +549,8 @@ function GardenInfoPanel({ g }: { g: GardenDetail }) {
                         className="w-full gap-1.5 text-xs"
                     >
                         <Link href={garden.edit(g.id)}>
-                            <Pencil className="h-3.5 w-3.5" /> Edit Garden
+                            <Pencil className="h-3.5 w-3.5" />{' '}
+                            {t('common:edit')} {t('garden:common.garden')}
                         </Link>
                     </Button>
                 )}
@@ -354,17 +559,25 @@ function GardenInfoPanel({ g }: { g: GardenDetail }) {
     );
 }
 
+// ─── PlantDetailDrawer (read-only view) ──────────────────────────────────────
+
 function PlantDetailDrawer({
     plant,
     open,
     onClose,
+    onEdit,
+    canEdit,
 }: {
     plant: Plant | null;
     open: boolean;
     onClose: () => void;
+    onEdit: (plant: Plant) => void;
+    canEdit: boolean;
 }) {
+    const { t } = useTranslation(['garden', 'common']);
+
     return (
-        <Drawer open={open} onOpenChange={(v) => !v && onClose()}>
+        <Drawer open={open} onOpenChange={(v) => !v && onClose()} modal={true}>
             <DrawerContent>
                 <div className="mx-auto w-full max-w-lg">
                     {!plant ? (
@@ -385,91 +598,141 @@ function PlantDetailDrawer({
                                             </DrawerDescription>
                                         )}
                                     </div>
-                                    {plant.status && (
-                                        <Badge
-                                            variant="outline"
-                                            className={cn(
-                                                'shrink-0 text-[11px]',
-                                                getStatusCls(plant.status),
-                                            )}
-                                        >
-                                            {plant.status}
-                                        </Badge>
-                                    )}
+                                    <div className="flex shrink-0 items-center gap-2">
+                                        {plant.status && (
+                                            <Badge
+                                                variant="outline"
+                                                className={cn(
+                                                    'text-[11px]',
+                                                    getStatusCls(plant.status),
+                                                )}
+                                            >
+                                                {t(
+                                                    `garden:show.statuses.${plant.status.toLowerCase()}`,
+                                                    plant.status,
+                                                )}
+                                            </Badge>
+                                        )}
+                                        {canEdit && (
+                                            <Button
+                                                variant="outline"
+                                                size="icon"
+                                                className="h-7 w-7"
+                                                onClick={() => {
+                                                    onClose();
+                                                    // Small delay so detail drawer closes first
+                                                    setTimeout(
+                                                        () => onEdit(plant),
+                                                        150,
+                                                    );
+                                                }}
+                                            >
+                                                <Pencil className="h-3.5 w-3.5" />
+                                            </Button>
+                                        )}
+                                    </div>
                                 </div>
                             </DrawerHeader>
+
                             <div className="max-h-[60vh] overflow-y-auto px-4 pb-2">
                                 <div className="grid gap-4">
                                     {(plant.block || plant.sub_block) && (
                                         <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
                                             <p className="mb-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-                                                Location in Garden
+                                                {t('garden:show.plantLocation')}
                                             </p>
                                             <div className="flex gap-6">
                                                 {plant.block && (
                                                     <InfoRow
-                                                        label="Block"
+                                                        label={t(
+                                                            'garden:show.block',
+                                                        )}
                                                         value={plant.block}
                                                     />
                                                 )}
                                                 {plant.sub_block && (
                                                     <InfoRow
-                                                        label="Sub-block"
+                                                        label={t(
+                                                            'garden:show.subBlock',
+                                                        )}
                                                         value={plant.sub_block}
                                                     />
                                                 )}
                                             </div>
                                         </div>
                                     )}
+
                                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                                         <InfoRow
-                                            label="Planting Year"
+                                            label={t(
+                                                'garden:show.plantingYear',
+                                            )}
                                             value={plant.planting_year}
                                         />
                                         <InfoRow
-                                            label="Propagation"
+                                            label={t('garden:show.propagation')}
                                             value={plant.propagation_method}
                                         />
                                         <InfoRow
-                                            label="Rootstock"
+                                            label={t('garden:show.rootstock')}
                                             value={plant.rootstock}
                                         />
                                         <InfoRow
-                                            label="Seed Origin"
+                                            label={t('garden:show.seedOrigin')}
                                             value={plant.seed_origin}
                                         />
                                         <InfoRow
-                                            label="Registration No."
+                                            label={t(
+                                                'garden:show.registrationNumber',
+                                            )}
                                             value={plant.registration_number}
                                         />
+                                        {plant.planting_replacement && (
+                                            <InfoRow
+                                                label={t(
+                                                    'garden:show.plantingReplacement',
+                                                )}
+                                                value={
+                                                    plant.planting_replacement
+                                                }
+                                            />
+                                        )}
                                     </div>
+
                                     {plant.description && (
                                         <div>
                                             <p className="mb-1 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-                                                Description
+                                                {t('common:description')}
                                             </p>
                                             <p className="text-sm text-muted-foreground">
                                                 {plant.description}
                                             </p>
                                         </div>
                                     )}
+
                                     {(plant.parent_tree_type ||
                                         plant.parent_tree_class) && (
                                         <>
                                             <Separator />
                                             <div>
                                                 <p className="mb-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-                                                    Parent Tree
+                                                    {t(
+                                                        'garden:show.parentTree',
+                                                    )}
                                                 </p>
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <InfoRow
-                                                        label="Type"
+                                                        label={t(
+                                                            'garden:show.parentType',
+                                                        )}
                                                         value={
                                                             plant.parent_tree_type
                                                         }
                                                     />
                                                     <InfoRow
-                                                        label="Class"
+                                                        label={t(
+                                                            'garden:show.parentClass',
+                                                        )}
                                                         value={
                                                             plant.parent_tree_class
                                                         }
@@ -485,22 +748,29 @@ function PlantDetailDrawer({
                                             </div>
                                         </>
                                     )}
+
                                     {plant.status_change_date && (
                                         <>
                                             <Separator />
                                             <div>
                                                 <p className="mb-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-                                                    Status Change
+                                                    {t(
+                                                        'garden:show.statusChange',
+                                                    )}
                                                 </p>
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <InfoRow
-                                                        label="Date"
+                                                        label={t(
+                                                            'garden:show.statusChangeDate',
+                                                        )}
                                                         value={formatDate(
                                                             plant.status_change_date,
                                                         )}
                                                     />
                                                     <InfoRow
-                                                        label="Reason"
+                                                        label={t(
+                                                            'garden:show.statusChangeReason',
+                                                        )}
                                                         value={
                                                             plant.status_change_reason
                                                         }
@@ -509,10 +779,11 @@ function PlantDetailDrawer({
                                             </div>
                                         </>
                                     )}
+
                                     {plant.latitude && plant.longitude && (
                                         <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
                                             <p className="mb-1 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-                                                Coordinates
+                                                {t('garden:show.coordinates')}
                                             </p>
                                             <p className="font-mono text-xs text-muted-foreground">
                                                 {parseFloat(
@@ -525,10 +796,11 @@ function PlantDetailDrawer({
                                             </p>
                                         </div>
                                     )}
+
                                     {plant.image_url && (
                                         <div>
                                             <p className="mb-1 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-                                                Photo
+                                                {t('garden:show.photo')}
                                             </p>
                                             <img
                                                 src={plant.image_url}
@@ -539,10 +811,11 @@ function PlantDetailDrawer({
                                     )}
                                 </div>
                             </div>
+
                             <DrawerFooter className="pt-2">
                                 <DrawerClose asChild>
                                     <Button variant="outline" size="sm">
-                                        Close
+                                        {t('common:close')}
                                     </Button>
                                 </DrawerClose>
                             </DrawerFooter>
@@ -554,61 +827,82 @@ function PlantDetailDrawer({
     );
 }
 
-interface AddPlantForm {
-    plant_code: string;
-    variety: string;
-    block: string;
-    sub_block: string;
-    latitude: string;
-    longitude: string;
-    planting_year: string;
-    propagation_method: string;
-    description: string;
-    status: string;
-    image: File | null;
-}
+// ─── PlantFormDrawer (add + edit unified, no backdrop, coord picking) ─────────
 
-function AddPlantDrawer({
+function PlantFormDrawer({
     open,
     onClose,
     gardenId,
+    plantId,
     initialCoords,
-    onPlantAdded,
+    initialData,
+    existingImageUrl,
+    onSaved,
+    mapRef,
 }: {
     open: boolean;
     onClose: () => void;
     gardenId: number;
+    plantId?: number | null;
     initialCoords: [number, number] | null;
-    onPlantAdded?: () => void;
+    initialData: PlantFormData | null;
+    existingImageUrl?: string | null;
+    onSaved?: () => void;
+    mapRef: React.RefObject<ClusteredMapHandle | null>;
 }) {
-    const { data, setData, processing, errors, reset, transform, submit } =
-        useForm<AddPlantForm>({
-            plant_code: '',
-            variety: '',
-            block: '',
-            sub_block: '',
-            latitude: '',
-            longitude: '',
-            planting_year: '',
-            propagation_method: '',
-            description: '',
-            status: '',
-            image: null,
-        });
+    const { t } = useTranslation(['garden', 'common']);
+    const isEdit = !!plantId;
+    const [isPickingCoord, setIsPickingCoord] = useState(false);
 
+    const { data, setData, processing, errors, reset, transform, submit } =
+        useForm<PlantFormData>(EMPTY_FORM);
+
+    // Populate or reset when open state changes
     useEffect(() => {
-        if (initialCoords) {
+        if (!open) return;
+        if (initialData) {
+            // Edit mode – fill all fields
+            (Object.keys(initialData) as (keyof PlantFormData)[]).forEach(
+                (k) => {
+                    setData(k, initialData[k] as any);
+                },
+            );
+        } else {
+            reset();
+            if (initialCoords) {
+                setData('latitude', initialCoords[1].toFixed(6));
+                setData('longitude', initialCoords[0].toFixed(6));
+            }
+        }
+    }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Sync coord if user clicks map while drawer open (add mode)
+    useEffect(() => {
+        if (open && !isEdit && initialCoords) {
             setData('latitude', initialCoords[1].toFixed(6));
             setData('longitude', initialCoords[0].toFixed(6));
-        } else {
-            setData('latitude', '');
-            setData('longitude', '');
         }
-    }, [initialCoords]);
+    }, [initialCoords]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleClose = () => {
+        setIsPickingCoord(false);
+        mapRef.current?.stopPickingCoord();
         reset();
         onClose();
+    };
+
+    const handlePickCoord = () => {
+        setIsPickingCoord(true);
+        mapRef.current?.startPickingCoord((coords) => {
+            setData('latitude', coords[1].toFixed(6));
+            setData('longitude', coords[0].toFixed(6));
+            setIsPickingCoord(false);
+        });
+    };
+
+    const handleCancelPicking = () => {
+        setIsPickingCoord(false);
+        mapRef.current?.stopPickingCoord();
     };
 
     const handleSubmit = () => {
@@ -623,138 +917,475 @@ function AddPlantDrawer({
             if (d.planting_year) fd.append('planting_year', d.planting_year);
             if (d.propagation_method)
                 fd.append('propagation_method', d.propagation_method);
+            if (d.rootstock) fd.append('rootstock', d.rootstock);
+            if (d.seed_origin) fd.append('seed_origin', d.seed_origin);
             if (d.description) fd.append('description', d.description);
             if (d.status) fd.append('status', d.status);
+            if (d.status_change_date)
+                fd.append('status_change_date', d.status_change_date);
+            if (d.status_change_reason)
+                fd.append('status_change_reason', d.status_change_reason);
+            if (d.planting_replacement)
+                fd.append('planting_replacement', d.planting_replacement);
+            if (d.parent_tree_type)
+                fd.append('parent_tree_type', d.parent_tree_type);
+            if (d.parent_tree_class)
+                fd.append('parent_tree_class', d.parent_tree_class);
+            if (d.registration_number)
+                fd.append('registration_number', d.registration_number);
+            if (d.parent_tree_notes)
+                fd.append('parent_tree_notes', d.parent_tree_notes);
             if (d.image) fd.append('image', d.image);
+            if (isEdit && d.remove_image) fd.append('remove_image', '1');
+            if (isEdit) fd.append('_method', 'PUT');
             return fd;
         });
-        submit('post', `/gardens/${gardenId}/plants`, {
+
+        const url = isEdit
+            ? `/gardens/${gardenId}/plants/${plantId}`
+            : `/gardens/${gardenId}/plants`;
+
+        submit('post', url, {
             forceFormData: true,
             preserveScroll: true,
             onSuccess: () => {
                 handleClose();
-                onPlantAdded?.();
+                onSaved?.();
             },
         });
     };
 
     return (
-        <Drawer open={open} onOpenChange={(v) => !v && handleClose()}>
-            <DrawerContent>
-                <div className="mx-auto w-full max-w-lg">
-                    <DrawerHeader className="px-6 pt-6">
+        <Drawer
+            open={open}
+            onOpenChange={(v) => {
+                // Don't close while user is in coord-picking mode
+                if (!v && !isPickingCoord) handleClose();
+            }}
+            // No backdrop – user can interact with map
+            modal={false}
+            direction="right"
+        >
+            <DrawerContent className="!inset-y-0 right-0 left-auto flex h-full w-full max-w-md flex-col rounded-none border-l">
+                {/* Header */}
+                <DrawerHeader className="shrink-0 border-b px-6 pt-5 pb-4">
+                    <div className="flex items-center justify-between">
                         <DrawerTitle className="flex items-center gap-2">
                             <Sprout className="h-4 w-4 text-primary" />
-                            Add Plant
+                            {isEdit
+                                ? t('garden:show.editPlant')
+                                : t('garden:show.addPlant')}
                         </DrawerTitle>
-                        <DrawerDescription>
-                            Add a new plant to this garden.
-                            {initialCoords && ' Location pre-filled from map.'}
-                        </DrawerDescription>
-                    </DrawerHeader>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={handleClose}
+                        >
+                            <X className="h-4 w-4" />
+                        </Button>
+                    </div>
+                    <DrawerDescription className="mt-1">
+                        {isEdit
+                            ? t('garden:show.editPlantDesc')
+                            : t('garden:show.addPlantDesc')}
+                    </DrawerDescription>
+                </DrawerHeader>
 
-                    <div className="max-h-[65vh] overflow-y-auto px-6 pb-2">
-                        <div className="grid gap-3">
+                {/* Coord-picking banner */}
+                {isPickingCoord && (
+                    <div className="shrink-0 border-b bg-blue-50 px-6 py-2.5 dark:bg-blue-950/60">
+                        <div className="flex items-center gap-2">
+                            <LocateFixed className="h-3.5 w-3.5 animate-pulse text-blue-600 dark:text-blue-400" />
+                            <p className="flex-1 text-xs font-medium text-blue-700 dark:text-blue-300">
+                                {t('garden:show.pickingCoord')}
+                            </p>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 text-xs text-blue-700 hover:text-blue-900 dark:text-blue-300"
+                                onClick={handleCancelPicking}
+                            >
+                                {t('common:cancel')}
+                            </Button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Scrollable form body */}
+                <div className="flex-1 overflow-y-auto px-6 py-4">
+                    <div className="grid gap-3">
+                        {/* Kode Tanaman */}
+                        <div className="grid gap-1.5">
+                            <Label htmlFor="pf_plant_code" className="text-xs">
+                                {t('garden:show.plantCode')}{' '}
+                                <span className="text-destructive">*</span>
+                            </Label>
+                            <Input
+                                id="pf_plant_code"
+                                placeholder={t(
+                                    'garden:show.plantCodePlaceholder',
+                                )}
+                                value={data.plant_code}
+                                onChange={(e) =>
+                                    setData('plant_code', e.target.value)
+                                }
+                                className={cn(
+                                    'h-8 text-sm',
+                                    errors.plant_code && 'border-destructive',
+                                )}
+                            />
+                            {errors.plant_code && (
+                                <p className="text-[11px] text-destructive">
+                                    {errors.plant_code}
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Varietas + Blok */}
+                        <div className="grid grid-cols-2 gap-3">
                             <div className="grid gap-1.5">
-                                <Label htmlFor="plant_code" className="text-xs">
-                                    Plant Code{' '}
-                                    <span className="text-destructive">*</span>
+                                <Label htmlFor="pf_variety" className="text-xs">
+                                    {t('garden:show.variety')}
                                 </Label>
                                 <Input
-                                    id="plant_code"
-                                    placeholder="e.g. PLT-001"
-                                    value={data.plant_code}
-                                    onChange={(e) =>
-                                        setData('plant_code', e.target.value)
-                                    }
-                                    className={cn(
-                                        'h-8 text-sm',
-                                        errors.plant_code &&
-                                            'border-destructive',
+                                    id="pf_variety"
+                                    placeholder={t(
+                                        'garden:show.varietyPlaceholder',
                                     )}
+                                    value={data.variety}
+                                    onChange={(e) =>
+                                        setData('variety', e.target.value)
+                                    }
+                                    className="h-8 text-sm"
                                 />
-                                {errors.plant_code && (
-                                    <p className="text-[11px] text-destructive">
-                                        {errors.plant_code}
-                                    </p>
+                            </div>
+                            <div className="grid gap-1.5">
+                                <Label htmlFor="pf_block" className="text-xs">
+                                    {t('garden:show.block')}
+                                </Label>
+                                <Input
+                                    id="pf_block"
+                                    placeholder={t(
+                                        'garden:show.blockPlaceholder',
+                                    )}
+                                    value={data.block}
+                                    onChange={(e) =>
+                                        setData('block', e.target.value)
+                                    }
+                                    className="h-8 text-sm"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Sub Blok + Tgl Tanam */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="grid gap-1.5">
+                                <Label
+                                    htmlFor="pf_sub_block"
+                                    className="text-xs"
+                                >
+                                    {t('garden:show.subBlock')}
+                                </Label>
+                                <Input
+                                    id="pf_sub_block"
+                                    placeholder={t(
+                                        'garden:show.subBlockPlaceholder',
+                                    )}
+                                    value={data.sub_block}
+                                    onChange={(e) =>
+                                        setData('sub_block', e.target.value)
+                                    }
+                                    className="h-8 text-sm"
+                                />
+                            </div>
+                            <div className="grid gap-1.5">
+                                <Label
+                                    htmlFor="pf_planting_year"
+                                    className="text-xs"
+                                >
+                                    {t('garden:show.plantingYear')}
+                                </Label>
+                                <Input
+                                    id="pf_planting_year"
+                                    placeholder={t(
+                                        'garden:show.plantingYearPlaceholder',
+                                    )}
+                                    value={data.planting_year}
+                                    onChange={(e) =>
+                                        setData('planting_year', e.target.value)
+                                    }
+                                    className="h-8 text-sm"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Cara Perbanyakan + Batang Bawah */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="grid gap-1.5">
+                                <Label
+                                    htmlFor="pf_propagation"
+                                    className="text-xs"
+                                >
+                                    {t('garden:show.propagation')}
+                                </Label>
+                                <Input
+                                    id="pf_propagation"
+                                    placeholder={t(
+                                        'garden:show.propagationPlaceholder',
+                                    )}
+                                    value={data.propagation_method}
+                                    onChange={(e) =>
+                                        setData(
+                                            'propagation_method',
+                                            e.target.value,
+                                        )
+                                    }
+                                    className="h-8 text-sm"
+                                />
+                            </div>
+                            <div className="grid gap-1.5">
+                                <Label
+                                    htmlFor="pf_rootstock"
+                                    className="text-xs"
+                                >
+                                    {t('garden:show.rootstock')}
+                                </Label>
+                                <Input
+                                    id="pf_rootstock"
+                                    placeholder={t(
+                                        'garden:show.rootstockPlaceholder',
+                                    )}
+                                    value={data.rootstock}
+                                    onChange={(e) =>
+                                        setData('rootstock', e.target.value)
+                                    }
+                                    className="h-8 text-sm"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Asal Bibit + No Registrasi */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="grid gap-1.5">
+                                <Label
+                                    htmlFor="pf_seed_origin"
+                                    className="text-xs"
+                                >
+                                    {t('garden:show.seedOrigin')}
+                                </Label>
+                                <Input
+                                    id="pf_seed_origin"
+                                    placeholder={t(
+                                        'garden:show.seedOriginPlaceholder',
+                                    )}
+                                    value={data.seed_origin}
+                                    onChange={(e) =>
+                                        setData('seed_origin', e.target.value)
+                                    }
+                                    className="h-8 text-sm"
+                                />
+                            </div>
+                            <div className="grid gap-1.5">
+                                <Label
+                                    htmlFor="pf_reg_number"
+                                    className="text-xs"
+                                >
+                                    {t('garden:show.registrationNumber')}
+                                </Label>
+                                <Input
+                                    id="pf_reg_number"
+                                    placeholder={t(
+                                        'garden:show.registrationNumberPlaceholder',
+                                    )}
+                                    value={data.registration_number}
+                                    onChange={(e) =>
+                                        setData(
+                                            'registration_number',
+                                            e.target.value,
+                                        )
+                                    }
+                                    className="h-8 text-sm"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Keterangan */}
+                        <div className="grid gap-1.5">
+                            <Label htmlFor="pf_description" className="text-xs">
+                                {t('common:description')}
+                            </Label>
+                            <Textarea
+                                id="pf_description"
+                                placeholder={t(
+                                    'garden:show.descriptionPlaceholder',
                                 )}
-                            </div>
+                                value={data.description}
+                                onChange={(e) =>
+                                    setData('description', e.target.value)
+                                }
+                                className="min-h-[60px] resize-none text-sm"
+                                rows={2}
+                            />
+                        </div>
 
+                        {/* Status */}
+                        <div className="grid gap-1.5">
+                            <Label className="text-xs">
+                                {t('garden:show.status')}
+                            </Label>
+                            <Select
+                                value={data.status || undefined}
+                                onValueChange={(v) => setData('status', v)}
+                            >
+                                <SelectTrigger className="h-8 text-sm">
+                                    <SelectValue
+                                        placeholder={t(
+                                            'garden:show.statusPlaceholder',
+                                        )}
+                                    />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="ALIVE">
+                                        {t('garden:show.statuses.alive')}
+                                    </SelectItem>
+                                    <SelectItem value="DEAD">
+                                        {t('garden:show.statuses.dead')}
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {/* Tanggal Perubahan Status + Sebab */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <DatePickerField
+                                label={t('garden:show.statusChangeDate')}
+                                value={data.status_change_date}
+                                onChange={(v) =>
+                                    setData('status_change_date', v)
+                                }
+                            />
+                            <div className="grid gap-1.5">
+                                <Label
+                                    htmlFor="pf_status_reason"
+                                    className="text-xs"
+                                >
+                                    {t('garden:show.statusChangeReason')}
+                                </Label>
+                                <Input
+                                    id="pf_status_reason"
+                                    placeholder={t(
+                                        'garden:show.statusChangeReasonPlaceholder',
+                                    )}
+                                    value={data.status_change_reason}
+                                    onChange={(e) =>
+                                        setData(
+                                            'status_change_reason',
+                                            e.target.value,
+                                        )
+                                    }
+                                    className="h-8 text-sm"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Pergantian Tanaman */}
+                        <div className="grid gap-1.5">
+                            <Label htmlFor="pf_replacement" className="text-xs">
+                                {t('garden:show.plantingReplacement')}
+                            </Label>
+                            <Input
+                                id="pf_replacement"
+                                placeholder={t(
+                                    'garden:show.plantingReplacementPlaceholder',
+                                )}
+                                value={data.planting_replacement}
+                                onChange={(e) =>
+                                    setData(
+                                        'planting_replacement',
+                                        e.target.value,
+                                    )
+                                }
+                                className="h-8 text-sm"
+                            />
+                        </div>
+
+                        {/* Pohon Induk section */}
+                        <div className="grid gap-2">
+                            <p className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                                {t('garden:show.parentTree')}
+                            </p>
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="grid gap-1.5">
                                     <Label
-                                        htmlFor="variety"
+                                        htmlFor="pf_parent_type"
                                         className="text-xs"
                                     >
-                                        Variety
+                                        {t('garden:show.parentType')}
                                     </Label>
                                     <Input
-                                        id="variety"
-                                        placeholder="e.g. Robusta"
-                                        value={data.variety}
+                                        id="pf_parent_type"
+                                        placeholder={t(
+                                            'garden:show.parentTypePlaceholder',
+                                        )}
+                                        value={data.parent_tree_type}
                                         onChange={(e) =>
-                                            setData('variety', e.target.value)
+                                            setData(
+                                                'parent_tree_type',
+                                                e.target.value,
+                                            )
                                         }
                                         className="h-8 text-sm"
                                     />
                                 </div>
-                                <div className="grid gap-1.5">
-                                    <Label htmlFor="block" className="text-xs">
-                                        Block
-                                    </Label>
-                                    <Input
-                                        id="block"
-                                        placeholder="e.g. A1"
-                                        value={data.block}
-                                        onChange={(e) =>
-                                            setData('block', e.target.value)
-                                        }
-                                        className="h-8 text-sm"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
                                 <div className="grid gap-1.5">
                                     <Label
-                                        htmlFor="sub_block"
+                                        htmlFor="pf_parent_class"
                                         className="text-xs"
                                     >
-                                        Sub-block
+                                        {t('garden:show.parentClass')}
                                     </Label>
                                     <Input
-                                        id="sub_block"
-                                        placeholder="e.g. A1-2"
-                                        value={data.sub_block}
+                                        id="pf_parent_class"
+                                        placeholder={t(
+                                            'garden:show.parentClassPlaceholder',
+                                        )}
+                                        value={data.parent_tree_class}
                                         onChange={(e) =>
-                                            setData('sub_block', e.target.value)
-                                        }
-                                        className="h-8 text-sm"
-                                    />
-                                </div>
-                                <div className="grid gap-1.5">
-                                    <Label htmlFor="status" className="text-xs">
-                                        Status
-                                    </Label>
-                                    <Input
-                                        id="status"
-                                        placeholder="e.g. active"
-                                        value={data.status}
-                                        onChange={(e) =>
-                                            setData('status', e.target.value)
+                                            setData(
+                                                'parent_tree_class',
+                                                e.target.value,
+                                            )
                                         }
                                         className="h-8 text-sm"
                                     />
                                 </div>
                             </div>
+                            <Textarea
+                                id="pf_parent_notes"
+                                placeholder={t(
+                                    'garden:show.parentNotesPlaceholder',
+                                )}
+                                value={data.parent_tree_notes}
+                                onChange={(e) =>
+                                    setData('parent_tree_notes', e.target.value)
+                                }
+                                className="min-h-[48px] resize-none text-sm"
+                                rows={2}
+                            />
+                        </div>
 
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="grid gap-1.5">
-                                    <Label htmlFor="lat" className="text-xs">
-                                        Latitude
-                                    </Label>
+                        {/* Koordinat + Pick from map */}
+                        <div className="grid gap-1.5">
+                            <Label className="text-xs">
+                                {t('garden:show.coordinates')}
+                            </Label>
+                            <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+                                <div className="grid gap-1">
+                                    <span className="text-[10px] text-muted-foreground">
+                                        {t('garden:show.latitude')}
+                                    </span>
                                     <Input
-                                        id="lat"
                                         placeholder="-6.9175"
                                         value={data.latitude}
                                         onChange={(e) =>
@@ -763,12 +1394,11 @@ function AddPlantDrawer({
                                         className="h-8 font-mono text-xs"
                                     />
                                 </div>
-                                <div className="grid gap-1.5">
-                                    <Label htmlFor="lng" className="text-xs">
-                                        Longitude
-                                    </Label>
+                                <div className="grid gap-1">
+                                    <span className="text-[10px] text-muted-foreground">
+                                        {t('garden:show.longitude')}
+                                    </span>
                                     <Input
-                                        id="lng"
                                         placeholder="107.6191"
                                         value={data.longitude}
                                         onChange={(e) =>
@@ -777,119 +1407,125 @@ function AddPlantDrawer({
                                         className="h-8 font-mono text-xs"
                                     />
                                 </div>
+                                <TooltipProvider delayDuration={300}>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button
+                                                type="button"
+                                                variant={
+                                                    isPickingCoord
+                                                        ? 'default'
+                                                        : 'outline'
+                                                }
+                                                size="icon"
+                                                className={cn(
+                                                    'h-8 w-8 shrink-0',
+                                                    isPickingCoord &&
+                                                        'animate-pulse',
+                                                )}
+                                                onClick={
+                                                    isPickingCoord
+                                                        ? handleCancelPicking
+                                                        : handlePickCoord
+                                                }
+                                            >
+                                                <LocateFixed className="h-3.5 w-3.5" />
+                                            </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="left">
+                                            {isPickingCoord
+                                                ? t('common:cancel')
+                                                : t('garden:show.pickCoord')}
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
                             </div>
+                        </div>
 
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="grid gap-1.5">
-                                    <Label
-                                        htmlFor="planting_year"
-                                        className="text-xs"
-                                    >
-                                        Planting Year
-                                    </Label>
-                                    <Input
-                                        id="planting_year"
-                                        placeholder="e.g. 2022"
-                                        value={data.planting_year}
-                                        onChange={(e) =>
-                                            setData(
-                                                'planting_year',
-                                                e.target.value,
-                                            )
-                                        }
-                                        className="h-8 text-sm"
-                                    />
-                                </div>
-                                <div className="grid gap-1.5">
-                                    <Label
-                                        htmlFor="propagation_method"
-                                        className="text-xs"
-                                    >
-                                        Propagation
-                                    </Label>
-                                    <Input
-                                        id="propagation_method"
-                                        placeholder="e.g. Grafting"
-                                        value={data.propagation_method}
-                                        onChange={(e) =>
-                                            setData(
-                                                'propagation_method',
-                                                e.target.value,
-                                            )
-                                        }
-                                        className="h-8 text-sm"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="grid gap-1.5">
-                                <Label
-                                    htmlFor="description"
-                                    className="text-xs"
-                                >
-                                    Description
-                                </Label>
-                                <Input
-                                    id="description"
-                                    placeholder="Optional notes..."
-                                    value={data.description}
-                                    onChange={(e) =>
-                                        setData('description', e.target.value)
-                                    }
-                                    className="h-8 text-sm"
-                                />
-                            </div>
-
-                            <div className="grid gap-1.5">
-                                <Label className="text-xs">Plant Photo</Label>
+                        {/* Foto */}
+                        <div className="grid gap-1.5">
+                            <Label className="text-xs">
+                                {t('garden:show.plantPhoto')}
+                            </Label>
+                            {/* Show existing image in edit mode */}
+                            {isEdit &&
+                                existingImageUrl &&
+                                !data.remove_image && (
+                                    <div className="relative overflow-hidden rounded-lg border">
+                                        <img
+                                            src={existingImageUrl}
+                                            alt="foto tanaman"
+                                            className="max-h-32 w-full object-cover"
+                                        />
+                                        <Button
+                                            type="button"
+                                            variant="destructive"
+                                            size="icon"
+                                            className="absolute top-1.5 right-1.5 h-6 w-6"
+                                            onClick={() =>
+                                                setData('remove_image', true)
+                                            }
+                                        >
+                                            <Trash2 className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                )}
+                            {/* Show upload when: add mode, or edit+no existing, or edit+removed */}
+                            {(!isEdit ||
+                                !existingImageUrl ||
+                                data.remove_image) && (
                                 <ImageUpload
                                     value={data.image}
                                     onChange={(file) => setData('image', file)}
                                     onClear={() => setData('image', null)}
                                     error={errors.image}
                                 />
-                                {errors.image && (
-                                    <p className="text-[11px] text-destructive">
-                                        {errors.image}
-                                    </p>
-                                )}
-                            </div>
+                            )}
+                            {errors.image && (
+                                <p className="text-[11px] text-destructive">
+                                    {errors.image}
+                                </p>
+                            )}
                         </div>
                     </div>
-
-                    <DrawerFooter className="px-6 pb-6">
-                        <Button
-                            size="sm"
-                            className="gap-1.5"
-                            onClick={handleSubmit}
-                            disabled={processing || !data.plant_code.trim()}
-                        >
-                            {processing ? (
-                                <>
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />{' '}
-                                    Saving...
-                                </>
-                            ) : (
-                                <>
-                                    <Plus className="h-3.5 w-3.5" /> Save Plant
-                                </>
-                            )}
-                        </Button>
-                        <DrawerClose asChild>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={handleClose}
-                            >
-                                Cancel
-                            </Button>
-                        </DrawerClose>
-                    </DrawerFooter>
                 </div>
+
+                {/* Sticky footer */}
+                <DrawerFooter className="shrink-0 border-t px-6 pt-4 pb-6">
+                    <Button
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={handleSubmit}
+                        disabled={processing || !data.plant_code.trim()}
+                    >
+                        {processing ? (
+                            <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />{' '}
+                                {t('common:saving')}
+                            </>
+                        ) : (
+                            <>
+                                <Plus className="h-3.5 w-3.5" />{' '}
+                                {t('common:save')}
+                            </>
+                        )}
+                    </Button>
+                    <DrawerClose asChild>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleClose}
+                        >
+                            {t('common:cancel')}
+                        </Button>
+                    </DrawerClose>
+                </DrawerFooter>
             </DrawerContent>
         </Drawer>
     );
 }
+
+// ─── ClusteredMap ─────────────────────────────────────────────────────────────
 
 const ClusteredMap = forwardRef<
     ClusteredMapHandle,
@@ -901,11 +1537,14 @@ const ClusteredMap = forwardRef<
         onMapClick: (coords: [number, number]) => void;
     }
 >(({ gardenId, gardenPolygon, canEdit, onPlantClick, onMapClick }, ref) => {
+    const { t } = useTranslation('garden');
     const containerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<maplibregl.Map | null>(null);
     const mapReadyRef = useRef(false);
     const markerRef = useRef<maplibregl.Marker | null>(null);
+    const pickingRef = useRef<PickingCallback>(null);
     const [loading, setLoading] = useState(true);
+    const [isPicking, setIsPicking] = useState(false);
 
     const fetchAndUpdate = useCallback(
         async (map: maplibregl.Map) => {
@@ -930,7 +1569,7 @@ const ClusteredMap = forwardRef<
                             plant_code: p.plant_code,
                             variety: p.variety ?? '',
                             block: p.block ?? '',
-                            status: p.status ?? '',
+                            status: (p.status ?? '').toLowerCase(),
                         },
                     })),
                 };
@@ -948,6 +1587,7 @@ const ClusteredMap = forwardRef<
                         clusterRadius: 40,
                     });
 
+                    // Cluster circle
                     map.addLayer({
                         id: 'clusters',
                         type: 'circle',
@@ -978,6 +1618,7 @@ const ClusteredMap = forwardRef<
                         },
                     });
 
+                    // Cluster count label
                     map.addLayer({
                         id: 'cluster-count',
                         type: 'symbol',
@@ -990,37 +1631,53 @@ const ClusteredMap = forwardRef<
                         paint: { 'text-color': '#fff' },
                     });
 
+                    // Unclustered markers – icon chosen by status:
+                    // ALIVE → sprout-alive (green), DEAD → sprout-dead (red), else sprout-alive
                     map.addLayer({
                         id: 'unclustered-point',
                         type: 'symbol',
                         source: 'plants',
                         filter: ['!', ['has', 'point_count']],
                         layout: {
-                            'icon-image': 'sprout-marker',
-                            'icon-size': 1,
+                            'icon-image': [
+                                'match',
+                                ['get', 'status'],
+                                'dead',
+                                'sprout-dead',
+                                /* default */ 'sprout-alive',
+                            ],
+                            'icon-size': 2,
                             'icon-allow-overlap': true,
                             'icon-anchor': 'center',
                         },
                     });
 
+                    // Click cluster → zoom in
                     map.on('click', 'clusters', (e) => {
                         const features = map.queryRenderedFeatures(e.point, {
                             layers: ['clusters'],
                         });
                         const clusterId = features[0]?.properties?.cluster_id;
                         if (!clusterId) return;
-                        (
-                            map.getSource('plants') as maplibregl.GeoJSONSource
-                        ).getClusterExpansionZoom(clusterId);
+                        (map.getSource('plants') as maplibregl.GeoJSONSource)
+                            .getClusterExpansionZoom(clusterId)
+                            .then((zoom) =>
+                                map.flyTo({
+                                    center: (
+                                        features[0].geometry as GeoJSON.Point
+                                    ).coordinates as [number, number],
+                                    zoom,
+                                }),
+                            );
                     });
 
+                    // Click individual plant
                     map.on('click', 'unclustered-point', (e) => {
-                        const properties = e.features?.[0]?.properties;
-                        if (properties && properties.id) {
-                            onPlantClick(Number(properties.id));
-                        }
+                        const props = e.features?.[0]?.properties;
+                        if (props?.id) onPlantClick(Number(props.id));
                     });
 
+                    // Cursors
                     map.on('mouseenter', 'clusters', () => {
                         map.getCanvas().style.cursor = 'pointer';
                     });
@@ -1034,15 +1691,30 @@ const ClusteredMap = forwardRef<
                         map.getCanvas().style.cursor = '';
                     });
 
-                    if (canEdit) {
-                        map.on('click', (e) => {
-                            const hits = map.queryRenderedFeatures(e.point, {
-                                layers: ['unclustered-point', 'clusters'],
-                            });
-                            if (hits.length === 0)
-                                onMapClick([e.lngLat.lng, e.lngLat.lat]);
+                    // General map click for adding plant OR picking coord
+                    map.on('click', (e) => {
+                        const hits = map.queryRenderedFeatures(e.point, {
+                            layers: ['unclustered-point', 'clusters'],
                         });
-                    }
+                        if (hits.length > 0) return;
+
+                        const coords: [number, number] = [
+                            e.lngLat.lng,
+                            e.lngLat.lat,
+                        ];
+
+                        // If coord-picking mode is active, call the callback
+                        if (pickingRef.current) {
+                            pickingRef.current(coords);
+                            pickingRef.current = null;
+                            setIsPicking(false);
+                            map.getCanvas().style.cursor = '';
+                            return;
+                        }
+
+                        // Otherwise open add-plant drawer (if canEdit)
+                        if (canEdit) onMapClick(coords);
+                    });
                 }
             } finally {
                 setLoading(false);
@@ -1051,35 +1723,37 @@ const ClusteredMap = forwardRef<
         [gardenId, canEdit, onPlantClick, onMapClick],
     );
 
-    const flyTo = useCallback((coords: [number, number], zoom: number = 16) => {
+    const flyTo = useCallback((coords: [number, number], zoom = 16) => {
         if (mapRef.current && mapReadyRef.current) {
-            mapRef.current.flyTo({
-                center: coords,
-                zoom: zoom,
-                duration: 1500,
-            });
+            mapRef.current.flyTo({ center: coords, zoom, duration: 1500 });
         }
     }, []);
 
     const addMarker = useCallback((coords: [number, number]) => {
-        if (mapRef.current && mapReadyRef.current) {
-            if (markerRef.current) {
-                markerRef.current.remove();
-            }
+        if (!mapRef.current || !mapReadyRef.current) return;
+        markerRef.current?.remove();
+        const el = document.createElement('div');
+        el.style.cssText =
+            'background:#3b82f6;width:20px;height:20px;border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,.3)';
+        markerRef.current = new maplibregl.Marker({ element: el })
+            .setLngLat(coords)
+            .addTo(mapRef.current);
+    }, []);
 
-            const el = document.createElement('div');
-            el.className = 'marker';
-            el.style.backgroundColor = '#3b82f6';
-            el.style.width = '20px';
-            el.style.height = '20px';
-            el.style.borderRadius = '50%';
-            el.style.border = '3px solid white';
-            el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+    const startPickingCoord = useCallback(
+        (cb: (coords: [number, number]) => void) => {
+            pickingRef.current = cb;
+            setIsPicking(true);
+            if (mapRef.current)
+                mapRef.current.getCanvas().style.cursor = 'crosshair';
+        },
+        [],
+    );
 
-            markerRef.current = new maplibregl.Marker({ element: el })
-                .setLngLat(coords)
-                .addTo(mapRef.current!);
-        }
+    const stopPickingCoord = useCallback(() => {
+        pickingRef.current = null;
+        setIsPicking(false);
+        if (mapRef.current) mapRef.current.getCanvas().style.cursor = '';
     }, []);
 
     useImperativeHandle(ref, () => ({
@@ -1090,6 +1764,8 @@ const ClusteredMap = forwardRef<
         },
         flyTo,
         addMarker,
+        startPickingCoord,
+        stopPickingCoord,
     }));
 
     useEffect(() => {
@@ -1106,16 +1782,11 @@ const ClusteredMap = forwardRef<
         map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
         map.on('load', async () => {
-            await new Promise<void>((resolve) => {
-                const img = new Image();
-                img.onload = () => {
-                    map.addImage('sprout-marker', img, { pixelRatio: 1 });
-                    resolve();
-                };
-
-                img.onerror = () => resolve();
-                img.src = 'data:image/svg+xml,' + encodeURIComponent(svgMarker);
-            });
+            // Load two marker images: green (alive) and red (dead)
+            await Promise.all([
+                loadMapImage(map, 'sprout-alive', markerAlive),
+                loadMapImage(map, 'sprout-dead', markerDead),
+            ]);
 
             if (gardenPolygon) {
                 map.addSource('garden-area', {
@@ -1167,23 +1838,35 @@ const ClusteredMap = forwardRef<
             map.remove();
             mapRef.current = null;
         };
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     return (
         <div className="relative h-full w-full">
             <div ref={containerRef} className="h-full w-full" />
+
             {loading && (
                 <div className="pointer-events-none absolute inset-x-0 bottom-8 flex justify-center">
                     <div className="flex items-center gap-2 rounded-full border bg-background/95 px-3.5 py-1.5 text-xs font-medium shadow-md backdrop-blur">
                         <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                        Loading plants...
+                        {t('common:loading')}
                     </div>
                 </div>
             )}
-            {canEdit && !loading && (
+
+            {/* Crosshair cursor indicator when picking */}
+            {isPicking && (
+                <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center">
+                    <div className="flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50/95 px-3.5 py-1.5 text-xs font-medium text-blue-700 shadow-md backdrop-blur dark:border-blue-800 dark:bg-blue-950/95 dark:text-blue-300">
+                        <LocateFixed className="h-3.5 w-3.5 animate-pulse" />
+                        {t('garden:show.clickMapToPickCoord')}
+                    </div>
+                </div>
+            )}
+
+            {canEdit && !loading && !isPicking && (
                 <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
                     <div className="rounded-full border bg-background/90 px-3.5 py-1.5 text-[11px] font-medium text-muted-foreground shadow backdrop-blur">
-                        Click empty area on map to add a plant
+                        {t('garden:show.mapClickHint')}
                     </div>
                 </div>
             )}
@@ -1193,7 +1876,10 @@ const ClusteredMap = forwardRef<
 
 ClusteredMap.displayName = 'ClusteredMap';
 
+// ─── PlantListPagination ──────────────────────────────────────────────────────
+
 function PlantListPagination({ paginator }: { paginator: Paginator }) {
+    const { t } = useTranslation('common');
     const goTo = (url: string | null) => {
         if (!url) return;
         router.get(url, {}, { preserveScroll: true, preserveState: true });
@@ -1208,7 +1894,8 @@ function PlantListPagination({ paginator }: { paginator: Paginator }) {
     return (
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t bg-background px-4 py-2.5 sm:px-6">
             <p className="text-xs text-muted-foreground">
-                {paginator.from ?? 0}–{paginator.to ?? 0} of {paginator.total}
+                {paginator.from ?? 0}–{paginator.to ?? 0} {t('of')}{' '}
+                {paginator.total}
             </p>
             <div className="flex items-center gap-1">
                 <Button
@@ -1270,18 +1957,27 @@ function PlantListPagination({ paginator }: { paginator: Paginator }) {
     );
 }
 
+// ─── ShowGarden (main page) ───────────────────────────────────────────────────
+
 export default function ShowGarden({ garden: g, plants, filters }: Props) {
+    const { t } = useTranslation(['garden', 'common']);
     const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
+
+    // Detail drawer
     const [selectedPlant, setSelectedPlant] = useState<Plant | null>(null);
     const [plantDetailOpen, setPlantDetailOpen] = useState(false);
-    const [addPlantOpen, setAddPlantOpen] = useState(false);
+
+    // Form drawer (add + edit)
+    const [formOpen, setFormOpen] = useState(false);
+    const [editingPlant, setEditingPlant] = useState<Plant | null>(null);
     const [pendingCoords, setPendingCoords] = useState<[number, number] | null>(
         null,
     );
+
     const [search, setSearch] = useState(filters?.search ?? '');
     const [locationDialogOpen, setLocationDialogOpen] = useState(false);
     const [locationDenied, setLocationDenied] = useState(false);
-    const [isLoadingPlant, setIsLoadingPlant] = useState(false);
+
     const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
     const mapRef = useRef<ClusteredMapHandle>(null);
 
@@ -1290,6 +1986,7 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
     const totalPlants = plants?.total ?? 0;
     const plantRows = plants?.data ?? [];
 
+    // ── Location helpers ───────────────────────────────────────────────────
     const requestLocation = useCallback(() => {
         if (!navigator.geolocation) return alert('Geolocation not supported.');
         navigator.permissions
@@ -1317,6 +2014,7 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
         );
     }, [locationDenied]);
 
+    // ── Plant click handlers ───────────────────────────────────────────────
     const handlePlantClickFromList = useCallback((plant: Plant) => {
         setSelectedPlant(plant);
         setPlantDetailOpen(true);
@@ -1325,33 +2023,41 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
     const handlePlantClickFromMap = useCallback(
         async (plantId: number) => {
             try {
-                setIsLoadingPlant(true);
                 const response = await fetch(
                     `/gardens/${g.id}/plants/${plantId}`,
                 );
-                if (!response.ok)
-                    throw new Error('Failed to fetch plant details');
+                if (!response.ok) throw new Error('Failed to fetch');
                 const plant = await response.json();
                 setSelectedPlant(plant);
                 setPlantDetailOpen(true);
-            } catch (error) {
-                console.error('Failed to fetch plant details:', error);
-            } finally {
-                setIsLoadingPlant(false);
+            } catch (err) {
+                console.error('Failed to fetch plant details:', err);
             }
         },
         [g.id],
     );
 
+    // ── Map click → open add drawer ────────────────────────────────────────
     const handleMapClick = useCallback((coords: [number, number]) => {
+        // Don't open add drawer if we're in coord-picking mode for edit
         setPendingCoords(coords);
-        setAddPlantOpen(true);
+        setEditingPlant(null);
+        setFormOpen(true);
     }, []);
 
-    const handlePlantAdded = useCallback(() => {
+    // ── Open edit drawer ───────────────────────────────────────────────────
+    const handleEditPlant = useCallback((plant: Plant) => {
+        setEditingPlant(plant);
+        setPendingCoords(null);
+        setFormOpen(true);
+    }, []);
+
+    // ── After save ─────────────────────────────────────────────────────────
+    const handleSaved = useCallback(() => {
         mapRef.current?.refreshPlants();
     }, []);
 
+    // ── Search ─────────────────────────────────────────────────────────────
     const handleSearch = useCallback(
         (value: string) => {
             setSearch(value);
@@ -1375,10 +2081,15 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
         [g.id, filters?.per_page],
     );
 
+    // Derive initialData and existingImageUrl for PlantFormDrawer
+    const editFormData = editingPlant ? plantToForm(editingPlant) : null;
+    const editImageUrl = editingPlant?.image_url ?? null;
+
     return (
         <>
             <Head title={g.name} />
 
+            {/* Location dialog */}
             <AlertDialog
                 open={locationDialogOpen}
                 onOpenChange={setLocationDialogOpen}
@@ -1387,26 +2098,28 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                     <AlertDialogHeader>
                         <AlertDialogTitle>
                             {locationDenied
-                                ? 'Location Access Blocked'
-                                : 'Allow Location Access'}
+                                ? t('garden:create.locationDialog.blockedTitle')
+                                : t('garden:create.locationDialog.title')}
                         </AlertDialogTitle>
                         <AlertDialogDescription>
                             {locationDenied
-                                ? 'Your browser is blocking location access. Open browser settings, allow location for this site, then try again.'
-                                : 'This app needs your GPS location to center the map and help you locate plants.'}
+                                ? t('garden:create.locationDialog.blockedDesc')
+                                : t('garden:create.locationDialog.description')}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogCancel>
+                            {t('common:cancel')}
+                        </AlertDialogCancel>
                         {!locationDenied ? (
                             <AlertDialogAction onClick={handleGrantLocation}>
-                                Allow
+                                {t('garden:create.locationDialog.allow')}
                             </AlertDialogAction>
                         ) : (
                             <AlertDialogAction
                                 onClick={() => setLocationDialogOpen(false)}
                             >
-                                Got it
+                                {t('garden:create.locationDialog.gotIt')}
                             </AlertDialogAction>
                         )}
                     </AlertDialogFooter>
@@ -1414,6 +2127,7 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
             </AlertDialog>
 
             <div className="flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden">
+                {/* Top bar */}
                 <div className="flex shrink-0 items-center justify-between border-b bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
                     <div className="min-w-0">
                         <h1 className="truncate text-base font-semibold tracking-tight">
@@ -1433,7 +2147,8 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                             onClick={requestLocation}
                             className="h-7 gap-1.5 text-xs"
                         >
-                            <Crosshair className="h-3.5 w-3.5" /> My Location
+                            <Crosshair className="h-3.5 w-3.5" />{' '}
+                            {t('garden:show.myLocation')}
                         </Button>
                         {canEdit && (
                             <Button
@@ -1443,7 +2158,8 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                 className="hidden h-7 gap-1.5 text-xs sm:flex"
                             >
                                 <Link href={garden.edit(g.id)}>
-                                    <Pencil className="h-3.5 w-3.5" /> Edit
+                                    <Pencil className="h-3.5 w-3.5" />{' '}
+                                    {t('common:edit')}
                                 </Link>
                             </Button>
                         )}
@@ -1452,20 +2168,24 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                 size="sm"
                                 className="h-7 gap-1.5 text-xs"
                                 onClick={() => {
+                                    setEditingPlant(null);
                                     setPendingCoords(null);
-                                    setAddPlantOpen(true);
+                                    setFormOpen(true);
                                 }}
                             >
                                 <Plus className="h-3.5 w-3.5" />
                                 <span className="hidden sm:inline">
-                                    Add Plant
+                                    {t('garden:show.addPlant')}
                                 </span>
-                                <span className="sm:hidden">Add</span>
+                                <span className="sm:hidden">
+                                    {t('common:add')}
+                                </span>
                             </Button>
                         )}
                     </div>
                 </div>
 
+                {/* Toolbar */}
                 <div className="flex shrink-0 items-center gap-2 border-b bg-background/80 px-4 py-2 backdrop-blur sm:px-6">
                     <TooltipProvider delayDuration={300}>
                         <div className="flex items-center gap-0.5 rounded-md border bg-muted/50 p-0.5">
@@ -1484,7 +2204,9 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                         <MapIcon className="h-3.5 w-3.5" />
                                     </Button>
                                 </TooltipTrigger>
-                                <TooltipContent>Map view</TooltipContent>
+                                <TooltipContent>
+                                    {t('garden:show.mapView')}
+                                </TooltipContent>
                             </Tooltip>
                             <Tooltip>
                                 <TooltipTrigger asChild>
@@ -1501,7 +2223,9 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                         <LayoutList className="h-3.5 w-3.5" />
                                     </Button>
                                 </TooltipTrigger>
-                                <TooltipContent>List view</TooltipContent>
+                                <TooltipContent>
+                                    {t('garden:show.listView')}
+                                </TooltipContent>
                             </Tooltip>
                         </div>
                     </TooltipProvider>
@@ -1509,7 +2233,9 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <Leaf className="h-3.5 w-3.5" />
                         <span>
-                            {totalPlants} plant{totalPlants !== 1 ? 's' : ''}
+                            {t('garden:show.totalPlants', {
+                                count: totalPlants,
+                            })}
                         </span>
                     </div>
 
@@ -1517,7 +2243,7 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                         <div className="relative ml-2 max-w-xs flex-1">
                             <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                             <Input
-                                placeholder="Search plants..."
+                                placeholder={t('garden:show.searchPlants')}
                                 value={search}
                                 onChange={(e) => handleSearch(e.target.value)}
                                 className="h-7 pl-8 text-xs"
@@ -1526,6 +2252,7 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                     )}
                 </div>
 
+                {/* Content */}
                 <div className="flex flex-1 overflow-hidden">
                     {viewMode === 'map' ? (
                         <>
@@ -1539,11 +2266,11 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                     onMapClick={handleMapClick}
                                 />
                             </div>
-                            <div className="hidden w-[260px] shrink-0 border-l bg-background lg:flex lg:flex-col xl:w-[280px]">
+                            <div className="hidden w-65 shrink-0 border-l bg-background lg:flex lg:flex-col xl:w-70">
                                 <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2.5">
                                     <Info className="h-3.5 w-3.5 text-muted-foreground" />
                                     <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                                        Garden Info
+                                        {t('garden:show.info')}
                                     </p>
                                 </div>
                                 <GardenInfoPanel g={g} />
@@ -1562,25 +2289,30 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                         </div>
                                         <p className="text-sm font-medium">
                                             {search
-                                                ? 'No plants found'
-                                                : 'No plants yet'}
+                                                ? t(
+                                                      'garden:show.noSearchResults',
+                                                  )
+                                                : t('garden:show.noPlants')}
                                         </p>
                                         <p className="mt-1 text-xs text-muted-foreground">
                                             {search
-                                                ? 'Try a different keyword.'
-                                                : 'Add plants to this garden to get started.'}
+                                                ? t(
+                                                      'garden:show.noSearchResultsDesc',
+                                                  )
+                                                : t('garden:show.noPlantsDesc')}
                                         </p>
                                         {!search && canEdit && (
                                             <Button
                                                 size="sm"
                                                 className="mt-5 gap-1.5"
                                                 onClick={() => {
+                                                    setEditingPlant(null);
                                                     setPendingCoords(null);
-                                                    setAddPlantOpen(true);
+                                                    setFormOpen(true);
                                                 }}
                                             >
                                                 <Plus className="h-3.5 w-3.5" />{' '}
-                                                Add Plant
+                                                {t('garden:show.addPlant')}
                                             </Button>
                                         )}
                                     </div>
@@ -1591,22 +2323,34 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                                 <TableHeader>
                                                     <TableRow className="bg-muted/30">
                                                         <TableHead className="w-28 pl-4 text-[10px] font-medium tracking-wider uppercase sm:pl-6">
-                                                            Code
+                                                            {t(
+                                                                'garden:show.plantCode',
+                                                            )}
                                                         </TableHead>
                                                         <TableHead className="text-[10px] font-medium tracking-wider uppercase">
-                                                            Variety
+                                                            {t(
+                                                                'garden:show.variety',
+                                                            )}
                                                         </TableHead>
                                                         <TableHead className="hidden text-[10px] font-medium tracking-wider uppercase sm:table-cell">
-                                                            Block
+                                                            {t(
+                                                                'garden:show.block',
+                                                            )}
                                                         </TableHead>
                                                         <TableHead className="hidden text-[10px] font-medium tracking-wider uppercase md:table-cell">
-                                                            Year
+                                                            {t(
+                                                                'garden:show.plantingYear',
+                                                            )}
                                                         </TableHead>
                                                         <TableHead className="hidden text-[10px] font-medium tracking-wider uppercase lg:table-cell">
-                                                            Propagation
+                                                            {t(
+                                                                'garden:show.propagation',
+                                                            )}
                                                         </TableHead>
                                                         <TableHead className="text-[10px] font-medium tracking-wider uppercase">
-                                                            Status
+                                                            {t(
+                                                                'garden:show.status',
+                                                            )}
                                                         </TableHead>
                                                         <TableHead className="w-7 pr-4 sm:pr-6" />
                                                     </TableRow>
@@ -1675,9 +2419,10 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                                                             ),
                                                                         )}
                                                                     >
-                                                                        {
-                                                                            plant.status
-                                                                        }
+                                                                        {t(
+                                                                            `garden:show.statuses.${plant.status.toLowerCase()}`,
+                                                                            plant.status,
+                                                                        )}
                                                                     </Badge>
                                                                 ) : (
                                                                     <span className="text-sm text-muted-foreground/40">
@@ -1702,11 +2447,11 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                     </>
                                 )}
                             </div>
-                            <div className="hidden w-[260px] shrink-0 border-l bg-background lg:flex lg:flex-col xl:w-[280px]">
+                            <div className="hidden w-65 shrink-0 border-l bg-background lg:flex lg:flex-col xl:w-70">
                                 <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2.5">
                                     <Info className="h-3.5 w-3.5 text-muted-foreground" />
                                     <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                                        Garden Info
+                                        {t('garden:show.info')}
                                     </p>
                                 </div>
                                 <GardenInfoPanel g={g} />
@@ -1716,6 +2461,7 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                 </div>
             </div>
 
+            {/* Plant detail drawer (read-only) */}
             <PlantDetailDrawer
                 plant={selectedPlant}
                 open={plantDetailOpen}
@@ -1723,17 +2469,25 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                     setPlantDetailOpen(false);
                     setSelectedPlant(null);
                 }}
+                onEdit={handleEditPlant}
+                canEdit={canEdit}
             />
 
-            <AddPlantDrawer
-                open={addPlantOpen}
+            {/* Unified plant form drawer (add + edit) */}
+            <PlantFormDrawer
+                open={formOpen}
                 onClose={() => {
-                    setAddPlantOpen(false);
+                    setFormOpen(false);
+                    setEditingPlant(null);
                     setPendingCoords(null);
                 }}
                 gardenId={g.id}
+                plantId={editingPlant?.id ?? null}
                 initialCoords={pendingCoords}
-                onPlantAdded={handlePlantAdded}
+                initialData={editFormData}
+                existingImageUrl={editImageUrl}
+                onSaved={handleSaved}
+                mapRef={mapRef}
             />
         </>
     );

@@ -69,6 +69,7 @@ import GardenMapDrawer, {
     MapHandle,
 } from '@/pages/garden/components/garden-map-drawer';
 import { ImageUpload } from '@/components/image-upload';
+import { useTranslation } from 'react-i18next';
 
 interface User {
     id: number;
@@ -140,6 +141,7 @@ function SectionTitle({
 }
 
 export default function CreateGarden({ users = [] }: Props) {
+    const { t } = useTranslation(['garden', 'common']);
     const mapRef = useRef<MapHandle>(null);
     const [mapReady, setMapReady] = useState(false);
     const [drawMode, setDrawMode] = useState(false);
@@ -278,11 +280,9 @@ export default function CreateGarden({ users = [] }: Props) {
         submit(garden.store());
     };
 
-    console.log(errors);
-
     return (
         <>
-            <Head title="New Garden" />
+            <Head title={t('garden:create.title')} />
 
             <AlertDialog
                 open={locationDialogOpen}
@@ -292,26 +292,28 @@ export default function CreateGarden({ users = [] }: Props) {
                     <AlertDialogHeader>
                         <AlertDialogTitle>
                             {locationDenied
-                                ? 'Location Access Blocked'
-                                : 'Allow Location Access'}
+                                ? t('garden:create.locationDialog.blockedTitle')
+                                : t('garden:create.locationDialog.title')}
                         </AlertDialogTitle>
                         <AlertDialogDescription>
                             {locationDenied
-                                ? 'Your browser is blocking location access. Open browser settings, allow location for this site, then try again.'
-                                : 'This app needs your GPS location to center the map and help you accurately mark your garden boundary.'}
+                                ? t('garden:create.locationDialog.blockedDesc')
+                                : t('garden:create.locationDialog.description')}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogCancel>
+                            {t('common:cancel')}
+                        </AlertDialogCancel>
                         {!locationDenied ? (
                             <AlertDialogAction onClick={handleGrantLocation}>
-                                Allow
+                                {t('garden:create.locationDialog.allow')}
                             </AlertDialogAction>
                         ) : (
                             <AlertDialogAction
                                 onClick={() => setLocationDialogOpen(false)}
                             >
-                                Got it
+                                {t('garden:create.locationDialog.gotIt')}
                             </AlertDialogAction>
                         )}
                     </AlertDialogFooter>
@@ -322,10 +324,10 @@ export default function CreateGarden({ users = [] }: Props) {
                 <div className="flex shrink-0 items-center justify-between border-b bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
                     <div>
                         <h1 className="text-base font-semibold tracking-tight">
-                            New Garden
+                            {t('garden:create.title')}
                         </h1>
                         <p className="text-xs text-muted-foreground">
-                            Fill in the details and draw the garden boundary
+                            {t('garden:create.subtitle')}
                         </p>
                     </div>
                     <div className="flex gap-2">
@@ -334,7 +336,7 @@ export default function CreateGarden({ users = [] }: Props) {
                             size="sm"
                             onClick={() => window.history.back()}
                         >
-                            Cancel
+                            {t('common:cancel')}
                         </Button>
                         <Button
                             size="sm"
@@ -345,11 +347,12 @@ export default function CreateGarden({ users = [] }: Props) {
                             {processing ? (
                                 <>
                                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    Saving…
+                                    {t('common:saving')}
                                 </>
                             ) : (
                                 <>
-                                    <Save className="h-3.5 w-3.5" /> Save Garden
+                                    <Save className="h-3.5 w-3.5" />{' '}
+                                    {t('garden:create.submit')}
                                 </>
                             )}
                         </Button>
@@ -368,7 +371,7 @@ export default function CreateGarden({ users = [] }: Props) {
                         )}
                     >
                         <House className="h-4 w-4" />
-                        Form
+                        {t('common:form')}
                     </button>
                     <button
                         onClick={() => setActiveTab('map')}
@@ -380,7 +383,7 @@ export default function CreateGarden({ users = [] }: Props) {
                         )}
                     >
                         <MapIcon className="h-4 w-4" />
-                        Map
+                        {t('common:map')}
                     </button>
                 </div>
 
@@ -390,7 +393,7 @@ export default function CreateGarden({ users = [] }: Props) {
                         className={cn(
                             'scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground/30 w-full overflow-y-auto border-r bg-background',
                             activeTab === 'form' ? 'block' : 'hidden lg:block',
-                            'lg:w-[460px] xl:w-[520px]',
+                            'lg:w-115 xl:w-130',
                         )}
                     >
                         <div className="space-y-8 px-4 py-5 sm:px-6">
@@ -398,8 +401,8 @@ export default function CreateGarden({ users = [] }: Props) {
                             <section>
                                 <SectionTitle
                                     icon={<House className="h-4 w-4" />}
-                                    title="Garden Information"
-                                    subtitle="Basic details about this garden plot"
+                                    title={t('garden:create.gardenInfo')}
+                                    subtitle={t('garden:create.gardenInfoDesc')}
                                 />
                                 <div className="space-y-6">
                                     {/* Garden Name - Required */}
@@ -408,13 +411,15 @@ export default function CreateGarden({ users = [] }: Props) {
                                         className="gap-1.5"
                                     >
                                         <FieldLabel>
-                                            Garden Name{' '}
+                                            {t('garden:create.form.name.label')}{' '}
                                             <span className="text-destructive">
                                                 *
                                             </span>
                                         </FieldLabel>
                                         <Input
-                                            placeholder="e.g. North Block — Mango Garden"
+                                            placeholder={t(
+                                                'garden:create.form.name.placeholder',
+                                            )}
                                             value={data.name}
                                             onChange={(e) =>
                                                 setData('name', e.target.value)
@@ -423,7 +428,9 @@ export default function CreateGarden({ users = [] }: Props) {
                                         />
                                         {errors.name && (
                                             <FieldError>
-                                                {String(errors.name)}
+                                                {t(
+                                                    'garden:create.form.name.required',
+                                                )}
                                             </FieldError>
                                         )}
                                     </Field>
@@ -433,10 +440,16 @@ export default function CreateGarden({ users = [] }: Props) {
                                         orientation="vertical"
                                         className="gap-1.5"
                                     >
-                                        <FieldLabel>Description</FieldLabel>
+                                        <FieldLabel>
+                                            {t(
+                                                'garden:create.form.description.label',
+                                            )}
+                                        </FieldLabel>
                                         <FieldContent>
                                             <Textarea
-                                                placeholder="Describe this garden…"
+                                                placeholder={t(
+                                                    'garden:create.form.description.placeholder',
+                                                )}
                                                 rows={3}
                                                 value={data.description}
                                                 onChange={(e) =>
@@ -448,8 +461,9 @@ export default function CreateGarden({ users = [] }: Props) {
                                                 className="resize-none"
                                             />
                                             <FieldDescription>
-                                                Optional — crop type, condition,
-                                                notes.
+                                                {t(
+                                                    'garden:create.form.description.optional',
+                                                )}
                                             </FieldDescription>
                                         </FieldContent>
                                         {errors.description && (
@@ -465,12 +479,16 @@ export default function CreateGarden({ users = [] }: Props) {
                                         className="gap-1.5"
                                     >
                                         <FieldLabel>
-                                            Location / Address
+                                            {t(
+                                                'garden:create.form.location.label',
+                                            )}
                                         </FieldLabel>
                                         <div className="relative">
                                             <MapPin className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                                             <Input
-                                                placeholder="e.g. Jl. Perkebunan No. 1, Bogor"
+                                                placeholder={t(
+                                                    'garden:create.form.location.placeholder',
+                                                )}
                                                 value={data.location}
                                                 onChange={(e) =>
                                                     setData(
@@ -482,8 +500,9 @@ export default function CreateGarden({ users = [] }: Props) {
                                             />
                                         </div>
                                         <FieldDescription>
-                                            Auto-filled when you use GPS on the
-                                            map.
+                                            {t(
+                                                'garden:create.form.location.description',
+                                            )}
                                         </FieldDescription>
                                         {errors.location && (
                                             <FieldError>
@@ -497,14 +516,18 @@ export default function CreateGarden({ users = [] }: Props) {
                                         orientation="vertical"
                                         className="gap-1.5"
                                     >
-                                        <FieldLabel>Area (Hectares)</FieldLabel>
+                                        <FieldLabel>
+                                            {t('garden:create.form.area.label')}
+                                        </FieldLabel>
                                         <div className="relative">
                                             <Shapes className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                                             <Input
                                                 type="number"
                                                 step="0.0001"
                                                 min="0"
-                                                placeholder="0.0000"
+                                                placeholder={t(
+                                                    'garden:create.form.area.placeholder',
+                                                )}
                                                 value={data.area_hectares}
                                                 onChange={(e) =>
                                                     setData(
@@ -516,8 +539,9 @@ export default function CreateGarden({ users = [] }: Props) {
                                             />
                                         </div>
                                         <FieldDescription>
-                                            Automatically calculated from drawn
-                                            polygon.
+                                            {t(
+                                                'garden:create.form.area.description',
+                                            )}
                                         </FieldDescription>
                                         {errors.area_hectares && (
                                             <FieldError>
@@ -535,10 +559,12 @@ export default function CreateGarden({ users = [] }: Props) {
                                                 />
                                             </span>
                                             <span className="text-sm text-green-800 dark:text-green-300">
-                                                Polygon saved —{' '}
-                                                <strong>
-                                                    {data.area_hectares} ha
-                                                </strong>
+                                                {t(
+                                                    'garden:create.map.polygonSaved',
+                                                    {
+                                                        area: data.area_hectares,
+                                                    },
+                                                )}
                                             </span>
                                         </div>
                                     )}
@@ -551,8 +577,10 @@ export default function CreateGarden({ users = [] }: Props) {
                             <section>
                                 <SectionTitle
                                     icon={<ImageIcon className="h-4 w-4" />}
-                                    title="Garden Photo"
-                                    subtitle="Optional cover image for this garden"
+                                    title={t('garden:create.gardenPhoto')}
+                                    subtitle={t(
+                                        'garden:create.gardenPhotoDesc',
+                                    )}
                                 />
                                 <Field
                                     orientation="vertical"
@@ -580,8 +608,10 @@ export default function CreateGarden({ users = [] }: Props) {
                             <section>
                                 <SectionTitle
                                     icon={<Users className="h-4 w-4" />}
-                                    title="Team Members"
-                                    subtitle="Add managers or viewers for this garden"
+                                    title={t('garden:create.teamMembers')}
+                                    subtitle={t(
+                                        'garden:create.teamMembersDesc',
+                                    )}
                                 />
                                 <div className="space-y-2">
                                     <div className="flex items-center gap-3 rounded-lg border bg-muted/40 px-3 py-2.5">
@@ -592,17 +622,19 @@ export default function CreateGarden({ users = [] }: Props) {
                                         </Avatar>
                                         <div className="min-w-0 flex-1">
                                             <p className="text-sm font-medium">
-                                                You
+                                                {t('garden:create.members.you')}
                                             </p>
                                             <p className="text-[11px] text-muted-foreground">
-                                                Owner of this garden
+                                                {t(
+                                                    'garden:create.members.owner',
+                                                )}
                                             </p>
                                         </div>
                                         <Badge
                                             variant="outline"
                                             className="shrink-0 text-[11px] font-medium"
                                         >
-                                            Owner
+                                            {t('garden:create.members.owner')}
                                         </Badge>
                                     </div>
 
@@ -635,7 +667,7 @@ export default function CreateGarden({ users = [] }: Props) {
                                                     )
                                                 }
                                             >
-                                                <SelectTrigger className="h-7 w-[96px] text-xs">
+                                                <SelectTrigger className="h-7 w-24 text-xs">
                                                     <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
@@ -643,13 +675,17 @@ export default function CreateGarden({ users = [] }: Props) {
                                                         value="MANAGER"
                                                         className="text-xs"
                                                     >
-                                                        Manager
+                                                        {t(
+                                                            'garden:create.members.roles.manager',
+                                                        )}
                                                     </SelectItem>
                                                     <SelectItem
                                                         value="VIEWER"
                                                         className="text-xs"
                                                     >
-                                                        Viewer
+                                                        {t(
+                                                            'garden:create.members.roles.viewer',
+                                                        )}
                                                     </SelectItem>
                                                 </SelectContent>
                                             </Select>
@@ -678,18 +714,26 @@ export default function CreateGarden({ users = [] }: Props) {
                                                     className="mt-1 w-full gap-1.5 border-dashed text-muted-foreground hover:text-foreground"
                                                 >
                                                     <Plus className="h-3.5 w-3.5" />{' '}
-                                                    Add Member
+                                                    {t(
+                                                        'garden:create.members.addMember',
+                                                    )}
                                                 </Button>
                                             </PopoverTrigger>
                                             <PopoverContent
-                                                className="w-[280px] p-0"
+                                                className="w-70 p-0"
                                                 align="start"
                                             >
                                                 <Command>
-                                                    <CommandInput placeholder="Search by name or email…" />
+                                                    <CommandInput
+                                                        placeholder={t(
+                                                            'garden:create.members.searchPlaceholder',
+                                                        )}
+                                                    />
                                                     <CommandList>
                                                         <CommandEmpty>
-                                                            No users found.
+                                                            {t(
+                                                                'garden:create.members.noUsers',
+                                                            )}
                                                         </CommandEmpty>
                                                         <CommandGroup>
                                                             {availableUsers.map(
@@ -746,12 +790,12 @@ export default function CreateGarden({ users = [] }: Props) {
                                     {processing ? (
                                         <>
                                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                            Saving…
+                                            {t('common:saving')}
                                         </>
                                     ) : (
                                         <>
                                             <Save className="h-3.5 w-3.5" />{' '}
-                                            Save Garden
+                                            {t('garden:create.submit')}
                                         </>
                                     )}
                                 </Button>
@@ -759,7 +803,7 @@ export default function CreateGarden({ users = [] }: Props) {
                                     variant="outline"
                                     onClick={() => window.history.back()}
                                 >
-                                    Cancel
+                                    {t('common:cancel')}
                                 </Button>
                             </div>
                         </div>
@@ -774,7 +818,7 @@ export default function CreateGarden({ users = [] }: Props) {
                     >
                         <div className="absolute inset-x-0 top-0 z-10 flex flex-wrap items-center gap-2 border-b bg-background/90 px-3 py-2 backdrop-blur-md sm:px-4">
                             <p className="mr-auto hidden text-xs font-medium tracking-wider text-muted-foreground uppercase sm:block">
-                                Garden Boundary Map
+                                {t('garden:create.map.title')}
                             </p>
 
                             <Button
@@ -783,8 +827,8 @@ export default function CreateGarden({ users = [] }: Props) {
                                 onClick={requestLocation}
                                 className="h-7 gap-1.5 text-xs"
                             >
-                                <Crosshair className="h-3.5 w-3.5" /> My
-                                Location
+                                <Crosshair className="h-3.5 w-3.5" />{' '}
+                                {t('garden:create.map.myLocation')}
                             </Button>
 
                             {!drawMode && !polygonReady && (
@@ -795,7 +839,8 @@ export default function CreateGarden({ users = [] }: Props) {
                                     disabled={!mapReady}
                                     className="h-7 gap-1.5 text-xs"
                                 >
-                                    <Pencil className="h-3.5 w-3.5" /> Draw Area
+                                    <Pencil className="h-3.5 w-3.5" />{' '}
+                                    {t('garden:create.map.drawArea')}
                                 </Button>
                             )}
                             {drawMode && (
@@ -805,7 +850,8 @@ export default function CreateGarden({ users = [] }: Props) {
                                     onClick={handleClearPolygon}
                                     className="h-7 gap-1.5 border-destructive/50 text-xs text-destructive hover:bg-destructive/10"
                                 >
-                                    <X className="h-3.5 w-3.5" /> Cancel
+                                    <X className="h-3.5 w-3.5" />{' '}
+                                    {t('garden:create.map.cancel')}
                                 </Button>
                             )}
                             {polygonReady && (
@@ -817,7 +863,7 @@ export default function CreateGarden({ users = [] }: Props) {
                                         className="h-7 gap-1.5 text-xs"
                                     >
                                         <Pencil className="h-3.5 w-3.5" />{' '}
-                                        Redraw
+                                        {t('garden:create.map.redraw')}
                                     </Button>
                                     <Button
                                         size="sm"
@@ -825,7 +871,8 @@ export default function CreateGarden({ users = [] }: Props) {
                                         onClick={handleClearPolygon}
                                         className="h-7 gap-1.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
                                     >
-                                        <Trash2 className="h-3.5 w-3.5" /> Clear
+                                        <Trash2 className="h-3.5 w-3.5" />{' '}
+                                        {t('garden:create.map.clear')}
                                     </Button>
                                 </>
                             )}
@@ -834,8 +881,7 @@ export default function CreateGarden({ users = [] }: Props) {
                         {drawMode && (
                             <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4 sm:bottom-8">
                                 <div className="rounded-full border bg-background/95 px-4 py-2 text-center text-xs font-medium shadow-md backdrop-blur sm:text-sm">
-                                    Click to place points · Double-click or
-                                    click the first point to finish
+                                    {t('garden:create.map.instructions')}
                                 </div>
                             </div>
                         )}

@@ -156,7 +156,7 @@ export default function Welcome() {
             </nav>
 
             {/* Hero Section */}
-            <section className="bg-gradient-to-b from-background via-background to-muted/30 px-4 py-24">
+            <section className="bg-linear-to-b from-background via-background to-muted/30 px-4 py-24">
                 <div className="container mx-auto max-w-6xl">
                     <div className="grid items-center gap-12 md:grid-cols-2">
                         <div className="space-y-8">
@@ -199,7 +199,7 @@ export default function Welcome() {
                             </div>
                         </div>
                         <div className="hidden md:block">
-                            <Card className="overflow-hidden border-2 border-border/50 bg-gradient-to-br from-primary/5 to-primary/10 shadow-lg">
+                            <Card className="overflow-hidden border-2 border-border/50 bg-linear-to-br from-primary/5 to-primary/10 shadow-lg">
                                 <CardContent className="p-8">
                                     <div className="space-y-4">
                                         <div className="grid grid-cols-2 gap-4">
@@ -482,7 +482,7 @@ export default function Welcome() {
 
             {/* FAQ Section */}
             <section id="faq" className="px-4 py-24">
-                <div className="container mx-auto max-w-2xl max-w-6xl">
+                <div className="container mx-auto max-w-2xl">
                     <div className="mb-16 space-y-4 text-center">
                         <h2 className="text-3xl font-bold text-balance md:text-4xl">
                             {t('welcome:faq.title')}
@@ -514,7 +514,7 @@ export default function Welcome() {
             </section>
 
             {/* CTA Section */}
-            <section className="bg-gradient-to-b from-background to-muted/30 px-4 py-24">
+            <section className="bg-linear-to-b from-background to-muted/30 px-4 py-24">
                 <div className="container mx-auto max-w-6xl space-y-8 text-center">
                     <div className="space-y-4">
                         <h2 className="text-3xl font-bold text-balance md:text-5xl">
