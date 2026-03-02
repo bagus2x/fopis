@@ -9,6 +9,20 @@ jobs:
 
     steps:
       ########################################
+      # Test SSH Connection First
+      ########################################
+      - name: Test SSH Connection
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ vars.SSH_HOST }}
+          username: ${{ vars.SSH_USER }}
+          key: ${{ vars.SSH_PRIVATE_KEY }}
+          script: |
+            echo "SSH connection successful ✅"
+            whoami
+            pwd
+
+      ########################################
       # Checkout
       ########################################
       - uses: actions/checkout@v4
