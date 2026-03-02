@@ -42,6 +42,7 @@ return new class extends Migration {
             $table->string('parent_tree_class')->nullable();
             $table->string('registration_number')->nullable();
             $table->text('parent_tree_notes')->nullable();
+            $table->string('image_path')->nullable();
 
             $table->timestamps();
         });
