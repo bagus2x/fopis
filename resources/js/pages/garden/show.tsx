@@ -966,7 +966,7 @@ function PlantFormDrawer({
             modal={false}
             direction="right"
         >
-            <DrawerContent className="!inset-y-0 right-0 left-auto flex h-full w-full max-w-md flex-col rounded-none border-l">
+            <DrawerContent className="inset-y-0! right-0 left-auto flex h-full w-full max-w-md flex-col rounded-none border-l">
                 {/* Header */}
                 <DrawerHeader className="shrink-0 border-b px-6 pt-5 pb-4">
                     <div className="flex items-center justify-between">
@@ -1224,7 +1224,7 @@ function PlantFormDrawer({
                                 onChange={(e) =>
                                     setData('description', e.target.value)
                                 }
-                                className="min-h-[60px] resize-none text-sm"
+                                className="min-h-15 resize-none text-sm"
                                 rows={2}
                             />
                         </div>
@@ -1370,7 +1370,7 @@ function PlantFormDrawer({
                                 onChange={(e) =>
                                     setData('parent_tree_notes', e.target.value)
                                 }
-                                className="min-h-[48px] resize-none text-sm"
+                                className="min-h-12 resize-none text-sm"
                                 rows={2}
                             />
                         </div>

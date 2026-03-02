@@ -63,6 +63,7 @@ class Plant extends Model
         'parent_tree_class',
         'registration_number',
         'parent_tree_notes',
+        'image_path'
     ];
 
     protected $casts = [

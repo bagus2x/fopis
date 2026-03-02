@@ -199,6 +199,8 @@ export default {
         },
         statusChange: 'Perubahan Status',
         mapClickHint: 'Klik area kosong di peta untuk menambah tanaman',
+        pickCoord: 'Pilih dari peta',
+        clickMapToPickCoord: 'Klik pada peta untuk memilih koordinat',
     },
     edit: {
         title: 'Ubah Kebun',
