@@ -17,7 +17,7 @@ class PlantController extends Controller
     {
         $this->authorizeGarden($garden);
 
-        abort_if($plant->garden_id !== $garden->id, 404);
+        abort_if($plant->garden_id != $garden->id, 404);
 
         $plantData = $plant->toArray();
 
@@ -28,7 +28,7 @@ class PlantController extends Controller
         return response()->json($plantData);
     }
 
-    private function authorizeGarden(Garden $garden, array $roles = ['OWNER', 'MANAGER', 'VIEWER']): void
+    private function authorizeGarden(Garden $garden, array $roles = ['OWNER', 'MANAGER', 'MAINTAINER']): void
     {
         abort_if(
             !$garden->members()

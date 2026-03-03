@@ -117,7 +117,7 @@ export default {
             noUsers: 'Tidak ada pengguna ditemukan.',
             roles: {
                 manager: 'Manajer',
-                viewer: 'Pengamat',
+                maintainer: 'Pengelola',
             },
         },
         locationDialog: {

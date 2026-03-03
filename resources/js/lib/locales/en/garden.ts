@@ -115,7 +115,7 @@ export default {
             noUsers: 'No users found.',
             roles: {
                 manager: 'Manager',
-                viewer: 'Viewer',
+                maintainer: 'Maintainer',
             },
         },
         locationDialog: {

@@ -50,6 +50,7 @@ import {
     Pencil,
     Plus,
     Save,
+    Search,
     Shapes,
     Trash2,
     Upload,
@@ -79,7 +80,7 @@ interface User {
 
 interface MemberEntry {
     user: User;
-    role: 'MANAGER' | 'VIEWER';
+    role: 'MANAGER' | 'MAINTAINER';
 }
 
 interface GardenFormData {
@@ -94,6 +95,14 @@ interface GardenFormData {
 
 interface Props {
     users: User[];
+}
+
+interface NominatimResult {
+    place_id: number;
+    display_name: string;
+    lat: string;
+    lon: string;
+    name: string;
 }
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -163,6 +172,77 @@ export default function CreateGarden({ users = [] }: Props) {
             image: null,
         });
 
+    const [locationQuery, setLocationQuery] = useState('');
+    const [locationResults, setLocationResults] = useState<NominatimResult[]>(
+        [],
+    );
+    const [locationSearching, setLocationSearching] = useState(false);
+    const [locationDropdownOpen, setLocationDropdownOpen] = useState(false);
+    const locationDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
+        null,
+    );
+    const locationContainerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (
+                locationContainerRef.current &&
+                !locationContainerRef.current.contains(e.target as Node)
+            ) {
+                setLocationDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () =>
+            document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleLocationQueryChange = (value: string) => {
+        setLocationQuery(value);
+        setData('location', value);
+        setLocationDropdownOpen(false);
+
+        if (locationDebounceRef.current)
+            clearTimeout(locationDebounceRef.current);
+
+        if (value.trim().length < 2) {
+            setLocationResults([]);
+            return;
+        }
+
+        locationDebounceRef.current = setTimeout(async () => {
+            setLocationSearching(true);
+            try {
+                const res = await fetch(
+                    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(value)}&format=json&limit=5`,
+                    { headers: { 'Accept-Language': 'en' } },
+                );
+                const json: NominatimResult[] = await res.json();
+                setLocationResults(json);
+                setLocationDropdownOpen(json.length > 0);
+            } catch {
+                setLocationResults([]);
+            } finally {
+                setLocationSearching(false);
+            }
+        }, 250);
+    };
+
+    const handleLocationSelect = (result: NominatimResult) => {
+        setData('location', result.display_name);
+        setLocationQuery(result.display_name);
+        setLocationResults([]);
+        setLocationDropdownOpen(false);
+        mapRef.current?.flyTo(
+            [parseFloat(result.lon), parseFloat(result.lat)],
+            15,
+        );
+        mapRef.current?.addMarker([
+            parseFloat(result.lon),
+            parseFloat(result.lat),
+        ]);
+    };
+
     const handlePolygonCreated = (polygon: GeoJSON.Polygon, areaHa: number) => {
         setPolygonReady(true);
         setDrawMode(false);
@@ -217,6 +297,9 @@ export default function CreateGarden({ users = [] }: Props) {
                         'location',
                         `${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}`,
                     );
+                    setLocationQuery(
+                        `${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}`,
+                    );
                 }
             },
             () => {
@@ -250,7 +333,10 @@ export default function CreateGarden({ users = [] }: Props) {
         );
     };
 
-    const updateMemberRole = (userId: number, role: 'MANAGER' | 'VIEWER') => {
+    const updateMemberRole = (
+        userId: number,
+        role: 'MANAGER' | 'MAINTAINER',
+    ) => {
         const updated = members.map((m) =>
             m.user.id === userId ? { ...m, role } : m,
         );
@@ -320,7 +406,7 @@ export default function CreateGarden({ users = [] }: Props) {
                 </AlertDialogContent>
             </AlertDialog>
 
-            <div className="flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden">
+            <div className="flex h-[calc(100vh-5rem)] flex-col overflow-hidden">
                 <div className="flex shrink-0 items-center justify-between border-b bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
                     <div>
                         <h1 className="text-base font-semibold tracking-tight">
@@ -387,7 +473,7 @@ export default function CreateGarden({ users = [] }: Props) {
                     </button>
                 </div>
 
-                <div className="flex flex-1 overflow-hidden">
+                <div className="mb-6 flex flex-1 overflow-hidden">
                     {/* Form Panel */}
                     <div
                         className={cn(
@@ -473,7 +559,7 @@ export default function CreateGarden({ users = [] }: Props) {
                                         )}
                                     </Field>
 
-                                    {/* Location */}
+                                    {/* Location with search */}
                                     <Field
                                         orientation="vertical"
                                         className="gap-1.5"
@@ -483,21 +569,88 @@ export default function CreateGarden({ users = [] }: Props) {
                                                 'garden:create.form.location.label',
                                             )}
                                         </FieldLabel>
-                                        <div className="relative">
-                                            <MapPin className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                                            <Input
-                                                placeholder={t(
-                                                    'garden:create.form.location.placeholder',
+                                        <div
+                                            className="relative"
+                                            ref={locationContainerRef}
+                                        >
+                                            <div className="relative">
+                                                <MapPin className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                                                <Input
+                                                    placeholder={t(
+                                                        'garden:create.form.location.placeholder',
+                                                    )}
+                                                    value={
+                                                        locationQuery ||
+                                                        data.location
+                                                    }
+                                                    onChange={(e) =>
+                                                        handleLocationQueryChange(
+                                                            e.target.value,
+                                                        )
+                                                    }
+                                                    onFocus={() => {
+                                                        if (
+                                                            locationResults.length >
+                                                            0
+                                                        )
+                                                            setLocationDropdownOpen(
+                                                                true,
+                                                            );
+                                                    }}
+                                                    className="pr-8 pl-8"
+                                                    autoComplete="off"
+                                                />
+                                                <div className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2">
+                                                    {locationSearching ? (
+                                                        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                                    ) : (
+                                                        <Search className="h-3.5 w-3.5 text-muted-foreground/50" />
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Dropdown results */}
+                                            {locationDropdownOpen &&
+                                                locationResults.length > 0 && (
+                                                    <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border bg-popover shadow-md">
+                                                        <ul className="py-1">
+                                                            {locationResults.map(
+                                                                (result) => (
+                                                                    <li
+                                                                        key={
+                                                                            result.place_id
+                                                                        }
+                                                                    >
+                                                                        <button
+                                                                            type="button"
+                                                                            className="flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors hover:bg-accent"
+                                                                            onClick={() =>
+                                                                                handleLocationSelect(
+                                                                                    result,
+                                                                                )
+                                                                            }
+                                                                        >
+                                                                            <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                                                            <div className="min-w-0">
+                                                                                <p className="truncate text-sm leading-tight font-medium">
+                                                                                    {result.name ||
+                                                                                        result.display_name.split(
+                                                                                            ',',
+                                                                                        )[0]}
+                                                                                </p>
+                                                                                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                                                                    {
+                                                                                        result.display_name
+                                                                                    }
+                                                                                </p>
+                                                                            </div>
+                                                                        </button>
+                                                                    </li>
+                                                                ),
+                                                            )}
+                                                        </ul>
+                                                    </div>
                                                 )}
-                                                value={data.location}
-                                                onChange={(e) =>
-                                                    setData(
-                                                        'location',
-                                                        e.target.value,
-                                                    )
-                                                }
-                                                className="pl-8"
-                                            />
                                         </div>
                                         <FieldDescription>
                                             {t(
@@ -525,10 +678,11 @@ export default function CreateGarden({ users = [] }: Props) {
                                                 type="number"
                                                 step="0.0001"
                                                 min="0"
+                                                readOnly
                                                 placeholder={t(
                                                     'garden:create.form.area.placeholder',
                                                 )}
-                                                value={data.area_hectares}
+                                                value={data.area_hectares ?? 0}
                                                 onChange={(e) =>
                                                     setData(
                                                         'area_hectares',
@@ -663,7 +817,7 @@ export default function CreateGarden({ users = [] }: Props) {
                                                         m.user.id,
                                                         v as
                                                             | 'MANAGER'
-                                                            | 'VIEWER',
+                                                            | 'MAINTAINER',
                                                     )
                                                 }
                                             >
@@ -680,11 +834,11 @@ export default function CreateGarden({ users = [] }: Props) {
                                                         )}
                                                     </SelectItem>
                                                     <SelectItem
-                                                        value="VIEWER"
+                                                        value="MAINTAINER"
                                                         className="text-xs"
                                                     >
                                                         {t(
-                                                            'garden:create.members.roles.viewer',
+                                                            'garden:create.members.roles.maintainer',
                                                         )}
                                                     </SelectItem>
                                                 </SelectContent>
