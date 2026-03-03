@@ -92,8 +92,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { useTranslation } from 'react-i18next';
 import { format, parse, isValid } from 'date-fns';
 import { markerAlive, markerDead } from '@/pages/garden/lib/utils';
-
-// ─── Interfaces ──────────────────────────────────────────────────────────────
+import { toast } from 'sonner';
 
 interface GardenMember {
     id: number;
@@ -166,18 +165,13 @@ interface Props {
     filters: { search?: string; per_page?: number };
 }
 
-// Coord-picking callback ref type
-type PickingCallback = ((coords: [number, number]) => void) | null;
-
 interface ClusteredMapHandle {
     refreshPlants: () => Promise<void>;
     flyTo: (coords: [number, number], zoom?: number) => void;
     addMarker: (coords: [number, number]) => void;
-    startPickingCoord: (cb: (coords: [number, number]) => void) => void;
-    stopPickingCoord: () => void;
+    addTempMarker: (coords: [number, number]) => void;
+    removeTempMarker: () => void;
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeBreadcrumbs(g: GardenDetail): BreadcrumbItem[] {
     return [
@@ -256,40 +250,21 @@ function InfoRow({ label, value }: { label: string; value: ReactNode }) {
     );
 }
 
-// ─── SVG marker builders ──────────────────────────────────────────────────────
-
-function buildSproutSvg(fill: string): string {
-    return [
-        `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">`,
-        `<circle cx="16" cy="16" r="16" fill="${fill}"/>`,
-        `<g transform="translate(4,4) scale(0.667)" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">`,
-        `<path d="M14 9.536V7a4 4 0 0 1 4-4h1.5a.5.5 0 0 1 .5.5V5a4 4 0 0 1-4 4 4 4 0 0 0-4 4c0 2 1 3 1 5a5 5 0 0 1-1 3"/>`,
-        `<path d="M4 9a5 5 0 0 1 8 4 5 5 0 0 1-8-4"/>`,
-        `<path d="M5 21h14"/>`,
-        `</g></svg>`,
-    ].join('');
-}
-
 async function loadMapImage(
     map: maplibregl.Map,
     name: string,
     svg: string,
 ): Promise<void> {
     return new Promise<void>((resolve) => {
-        const size = 32;
         const img = new Image();
         img.onload = () => {
-            if (!map.hasImage(name)) {
-                map.addImage(name, img, { pixelRatio: 2 });
-            }
+            if (!map.hasImage(name)) map.addImage(name, img, { pixelRatio: 2 });
             resolve();
         };
         img.onerror = () => resolve();
         img.src = 'data:image/svg+xml,' + encodeURIComponent(svg);
     });
 }
-
-// ─── DatePicker helper ────────────────────────────────────────────────────────
 
 function DatePickerField({
     label,
@@ -341,8 +316,6 @@ function DatePickerField({
         </div>
     );
 }
-
-// ─── Plant form data ──────────────────────────────────────────────────────────
 
 interface PlantFormData {
     plant_code: string;
@@ -418,8 +391,6 @@ function plantToForm(p: Plant): PlantFormData {
     };
 }
 
-// ─── GardenInfoPanel ─────────────────────────────────────────────────────────
-
 function GardenInfoPanel({ g }: { g: GardenDetail }) {
     const { t } = useTranslation(['garden', 'common']);
     const myRole = g.members[0];
@@ -482,7 +453,7 @@ function GardenInfoPanel({ g }: { g: GardenDetail }) {
                         </p>
                         <p className="mt-0.5 text-sm font-semibold">
                             {g.area_hectares
-                                ? `${parseFloat(g.area_hectares).toFixed(2)} ${t('garden:common.areaUnit', 'ha')}`
+                                ? `${parseFloat(g.area_hectares).toFixed(2)} ${t('garden:common.areaUnit')}`
                                 : '—'}
                         </p>
                     </div>
@@ -559,8 +530,6 @@ function GardenInfoPanel({ g }: { g: GardenDetail }) {
     );
 }
 
-// ─── PlantDetailDrawer (read-only view) ──────────────────────────────────────
-
 function PlantDetailDrawer({
     plant,
     open,
@@ -620,7 +589,6 @@ function PlantDetailDrawer({
                                                 className="h-7 w-7"
                                                 onClick={() => {
                                                     onClose();
-                                                    // Small delay so detail drawer closes first
                                                     setTimeout(
                                                         () => onEdit(plant),
                                                         150,
@@ -827,8 +795,6 @@ function PlantDetailDrawer({
     );
 }
 
-// ─── PlantFormDrawer (add + edit unified, no backdrop, coord picking) ─────────
-
 function PlantFormDrawer({
     open,
     onClose,
@@ -838,7 +804,6 @@ function PlantFormDrawer({
     initialData,
     existingImageUrl,
     onSaved,
-    mapRef,
 }: {
     open: boolean;
     onClose: () => void;
@@ -848,20 +813,17 @@ function PlantFormDrawer({
     initialData: PlantFormData | null;
     existingImageUrl?: string | null;
     onSaved?: () => void;
-    mapRef: React.RefObject<ClusteredMapHandle | null>;
 }) {
     const { t } = useTranslation(['garden', 'common']);
     const isEdit = !!plantId;
-    const [isPickingCoord, setIsPickingCoord] = useState(false);
+    const [isGettingLocation, setIsGettingLocation] = useState(false);
 
     const { data, setData, processing, errors, reset, transform, submit } =
         useForm<PlantFormData>(EMPTY_FORM);
 
-    // Populate or reset when open state changes
     useEffect(() => {
         if (!open) return;
         if (initialData) {
-            // Edit mode – fill all fields
             (Object.keys(initialData) as (keyof PlantFormData)[]).forEach(
                 (k) => {
                     setData(k, initialData[k] as any);
@@ -876,7 +838,6 @@ function PlantFormDrawer({
         }
     }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Sync coord if user clicks map while drawer open (add mode)
     useEffect(() => {
         if (open && !isEdit && initialCoords) {
             setData('latitude', initialCoords[1].toFixed(6));
@@ -885,24 +846,84 @@ function PlantFormDrawer({
     }, [initialCoords]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleClose = () => {
-        setIsPickingCoord(false);
-        mapRef.current?.stopPickingCoord();
+        setIsGettingLocation(false);
         reset();
         onClose();
     };
 
-    const handlePickCoord = () => {
-        setIsPickingCoord(true);
-        mapRef.current?.startPickingCoord((coords) => {
-            setData('latitude', coords[1].toFixed(6));
-            setData('longitude', coords[0].toFixed(6));
-            setIsPickingCoord(false);
-        });
-    };
+    const handleGetCurrentLocation = () => {
+        if (!navigator.geolocation) {
+            toast.error(t('garden:show.geolocationNotSupported'), {
+                richColors: true,
+            });
+            return;
+        }
 
-    const handleCancelPicking = () => {
-        setIsPickingCoord(false);
-        mapRef.current?.stopPickingCoord();
+        setIsGettingLocation(true);
+
+        navigator.permissions
+            ?.query({ name: 'geolocation' })
+            .then((result) => {
+                if (result.state === 'denied') {
+                    setIsGettingLocation(false);
+                    toast.error(t('garden:show.locationPermissionDenied'), {
+                        richColors: true,
+                    });
+                    return;
+                }
+
+                navigator.geolocation.getCurrentPosition(
+                    ({ coords }) => {
+                        setData('latitude', coords.latitude.toFixed(6));
+                        setData('longitude', coords.longitude.toFixed(6));
+                        setIsGettingLocation(false);
+                        toast.success(t('garden:show.locationObtained'), {
+                            richColors: true,
+                        });
+                    },
+                    (err) => {
+                        setIsGettingLocation(false);
+                        if (err.code === err.PERMISSION_DENIED) {
+                            toast.error(
+                                t('garden:show.locationPermissionDenied'),
+                                { richColors: true },
+                            );
+                        } else if (err.code === err.POSITION_UNAVAILABLE) {
+                            toast.error(t('garden:show.locationUnavailable'), {
+                                richColors: true,
+                            });
+                        } else if (err.code === err.TIMEOUT) {
+                            toast.error(t('garden:show.locationTimeout'), {
+                                richColors: true,
+                            });
+                        } else {
+                            toast.error(t('garden:show.locationError'), {
+                                richColors: true,
+                            });
+                        }
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 },
+                );
+            })
+            .catch(() => {
+                navigator.geolocation.getCurrentPosition(
+                    ({ coords }) => {
+                        setData('latitude', coords.latitude.toFixed(6));
+                        setData('longitude', coords.longitude.toFixed(6));
+                        setIsGettingLocation(false);
+                        toast.success(t('garden:show.locationObtained'), {
+                            richColors: true,
+                        });
+                    },
+                    () => {
+                        setIsGettingLocation(false);
+                        toast.error(t('garden:show.locationPermissionDenied'), {
+                            richColors: true,
+                        });
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 },
+                );
+            });
     };
 
     const handleSubmit = () => {
@@ -951,6 +972,18 @@ function PlantFormDrawer({
             onSuccess: () => {
                 handleClose();
                 onSaved?.();
+                toast.success(
+                    isEdit
+                        ? t('garden:messages.plantUpdated')
+                        : t('garden:messages.plantAdded'),
+                    { richColors: true },
+                );
+            },
+            onError: (errs) => {
+                const firstError = Object.values(errs)[0];
+                toast.error(firstError ?? t('common:saveFailed'), {
+                    richColors: true,
+                });
             },
         });
     };
@@ -959,15 +992,12 @@ function PlantFormDrawer({
         <Drawer
             open={open}
             onOpenChange={(v) => {
-                // Don't close while user is in coord-picking mode
-                if (!v && !isPickingCoord) handleClose();
+                if (!v) handleClose();
             }}
-            // No backdrop – user can interact with map
-            modal={false}
+            modal={true}
             direction="right"
         >
             <DrawerContent className="inset-y-0! right-0 left-auto flex h-full w-full max-w-md flex-col rounded-none border-l">
-                {/* Header */}
                 <DrawerHeader className="shrink-0 border-b px-6 pt-5 pb-4">
                     <div className="flex items-center justify-between">
                         <DrawerTitle className="flex items-center gap-2">
@@ -992,30 +1022,8 @@ function PlantFormDrawer({
                     </DrawerDescription>
                 </DrawerHeader>
 
-                {/* Coord-picking banner */}
-                {isPickingCoord && (
-                    <div className="shrink-0 border-b bg-blue-50 px-6 py-2.5 dark:bg-blue-950/60">
-                        <div className="flex items-center gap-2">
-                            <LocateFixed className="h-3.5 w-3.5 animate-pulse text-blue-600 dark:text-blue-400" />
-                            <p className="flex-1 text-xs font-medium text-blue-700 dark:text-blue-300">
-                                {t('garden:show.pickingCoord')}
-                            </p>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 px-2 text-xs text-blue-700 hover:text-blue-900 dark:text-blue-300"
-                                onClick={handleCancelPicking}
-                            >
-                                {t('common:cancel')}
-                            </Button>
-                        </div>
-                    </div>
-                )}
-
-                {/* Scrollable form body */}
                 <div className="flex-1 overflow-y-auto px-6 py-4">
                     <div className="grid gap-3">
-                        {/* Kode Tanaman */}
                         <div className="grid gap-1.5">
                             <Label htmlFor="pf_plant_code" className="text-xs">
                                 {t('garden:show.plantCode')}{' '}
@@ -1042,7 +1050,6 @@ function PlantFormDrawer({
                             )}
                         </div>
 
-                        {/* Varietas + Blok */}
                         <div className="grid grid-cols-2 gap-3">
                             <div className="grid gap-1.5">
                                 <Label htmlFor="pf_variety" className="text-xs">
@@ -1078,7 +1085,6 @@ function PlantFormDrawer({
                             </div>
                         </div>
 
-                        {/* Sub Blok + Tgl Tanam */}
                         <div className="grid grid-cols-2 gap-3">
                             <div className="grid gap-1.5">
                                 <Label
@@ -1120,7 +1126,6 @@ function PlantFormDrawer({
                             </div>
                         </div>
 
-                        {/* Cara Perbanyakan + Batang Bawah */}
                         <div className="grid grid-cols-2 gap-3">
                             <div className="grid gap-1.5">
                                 <Label
@@ -1165,7 +1170,6 @@ function PlantFormDrawer({
                             </div>
                         </div>
 
-                        {/* Asal Bibit + No Registrasi */}
                         <div className="grid grid-cols-2 gap-3">
                             <div className="grid gap-1.5">
                                 <Label
@@ -1210,7 +1214,6 @@ function PlantFormDrawer({
                             </div>
                         </div>
 
-                        {/* Keterangan */}
                         <div className="grid gap-1.5">
                             <Label htmlFor="pf_description" className="text-xs">
                                 {t('common:description')}
@@ -1229,7 +1232,6 @@ function PlantFormDrawer({
                             />
                         </div>
 
-                        {/* Status */}
                         <div className="grid gap-1.5">
                             <Label className="text-xs">
                                 {t('garden:show.status')}
@@ -1256,7 +1258,6 @@ function PlantFormDrawer({
                             </Select>
                         </div>
 
-                        {/* Tanggal Perubahan Status + Sebab */}
                         <div className="grid grid-cols-2 gap-3">
                             <DatePickerField
                                 label={t('garden:show.statusChangeDate')}
@@ -1289,7 +1290,6 @@ function PlantFormDrawer({
                             </div>
                         </div>
 
-                        {/* Pergantian Tanaman */}
                         <div className="grid gap-1.5">
                             <Label htmlFor="pf_replacement" className="text-xs">
                                 {t('garden:show.plantingReplacement')}
@@ -1310,7 +1310,6 @@ function PlantFormDrawer({
                             />
                         </div>
 
-                        {/* Pohon Induk section */}
                         <div className="grid gap-2">
                             <p className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
                                 {t('garden:show.parentTree')}
@@ -1375,7 +1374,6 @@ function PlantFormDrawer({
                             />
                         </div>
 
-                        {/* Koordinat + Pick from map */}
                         <div className="grid gap-1.5">
                             <Label className="text-xs">
                                 {t('garden:show.coordinates')}
@@ -1388,10 +1386,8 @@ function PlantFormDrawer({
                                     <Input
                                         placeholder="-6.9175"
                                         value={data.latitude}
-                                        onChange={(e) =>
-                                            setData('latitude', e.target.value)
-                                        }
-                                        className="h-8 font-mono text-xs"
+                                        readOnly
+                                        className="h-8 cursor-default bg-muted/40 font-mono text-xs"
                                     />
                                 </div>
                                 <div className="grid gap-1">
@@ -1401,10 +1397,8 @@ function PlantFormDrawer({
                                     <Input
                                         placeholder="107.6191"
                                         value={data.longitude}
-                                        onChange={(e) =>
-                                            setData('longitude', e.target.value)
-                                        }
-                                        className="h-8 font-mono text-xs"
+                                        readOnly
+                                        className="h-8 cursor-default bg-muted/40 font-mono text-xs"
                                     />
                                 </div>
                                 <TooltipProvider delayDuration={300}>
@@ -1412,42 +1406,40 @@ function PlantFormDrawer({
                                         <TooltipTrigger asChild>
                                             <Button
                                                 type="button"
-                                                variant={
-                                                    isPickingCoord
-                                                        ? 'default'
-                                                        : 'outline'
-                                                }
+                                                variant="outline"
                                                 size="icon"
-                                                className={cn(
-                                                    'h-8 w-8 shrink-0',
-                                                    isPickingCoord &&
-                                                        'animate-pulse',
-                                                )}
+                                                className="h-8 w-8 shrink-0"
                                                 onClick={
-                                                    isPickingCoord
-                                                        ? handleCancelPicking
-                                                        : handlePickCoord
+                                                    handleGetCurrentLocation
                                                 }
+                                                disabled={isGettingLocation}
                                             >
-                                                <LocateFixed className="h-3.5 w-3.5" />
+                                                {isGettingLocation ? (
+                                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                ) : (
+                                                    <LocateFixed className="h-3.5 w-3.5" />
+                                                )}
                                             </Button>
                                         </TooltipTrigger>
                                         <TooltipContent side="left">
-                                            {isPickingCoord
-                                                ? t('common:cancel')
-                                                : t('garden:show.pickCoord')}
+                                            {t(
+                                                'garden:show.useCurrentLocation',
+                                            )}
                                         </TooltipContent>
                                     </Tooltip>
                                 </TooltipProvider>
                             </div>
+                            {(data.latitude || data.longitude) && (
+                                <p className="text-[10px] text-muted-foreground">
+                                    {t('garden:show.coordFromMapOrLocation')}
+                                </p>
+                            )}
                         </div>
 
-                        {/* Foto */}
                         <div className="grid gap-1.5">
                             <Label className="text-xs">
                                 {t('garden:show.plantPhoto')}
                             </Label>
-                            {/* Show existing image in edit mode */}
                             {isEdit &&
                                 existingImageUrl &&
                                 !data.remove_image && (
@@ -1470,7 +1462,6 @@ function PlantFormDrawer({
                                         </Button>
                                     </div>
                                 )}
-                            {/* Show upload when: add mode, or edit+no existing, or edit+removed */}
                             {(!isEdit ||
                                 !existingImageUrl ||
                                 data.remove_image) && (
@@ -1490,7 +1481,6 @@ function PlantFormDrawer({
                     </div>
                 </div>
 
-                {/* Sticky footer */}
                 <DrawerFooter className="shrink-0 border-t px-6 pt-4 pb-6">
                     <Button
                         size="sm"
@@ -1525,8 +1515,6 @@ function PlantFormDrawer({
     );
 }
 
-// ─── ClusteredMap ─────────────────────────────────────────────────────────────
-
 const ClusteredMap = forwardRef<
     ClusteredMapHandle,
     {
@@ -1542,9 +1530,8 @@ const ClusteredMap = forwardRef<
     const mapRef = useRef<maplibregl.Map | null>(null);
     const mapReadyRef = useRef(false);
     const markerRef = useRef<maplibregl.Marker | null>(null);
-    const pickingRef = useRef<PickingCallback>(null);
+    const tempMarkerRef = useRef<maplibregl.Marker | null>(null);
     const [loading, setLoading] = useState(true);
-    const [isPicking, setIsPicking] = useState(false);
 
     const fetchAndUpdate = useCallback(
         async (map: maplibregl.Map) => {
@@ -1587,7 +1574,6 @@ const ClusteredMap = forwardRef<
                         clusterRadius: 40,
                     });
 
-                    // Cluster circle
                     map.addLayer({
                         id: 'clusters',
                         type: 'circle',
@@ -1618,7 +1604,6 @@ const ClusteredMap = forwardRef<
                         },
                     });
 
-                    // Cluster count label
                     map.addLayer({
                         id: 'cluster-count',
                         type: 'symbol',
@@ -1631,8 +1616,6 @@ const ClusteredMap = forwardRef<
                         paint: { 'text-color': '#fff' },
                     });
 
-                    // Unclustered markers – icon chosen by status:
-                    // ALIVE → sprout-alive (green), DEAD → sprout-dead (red), else sprout-alive
                     map.addLayer({
                         id: 'unclustered-point',
                         type: 'symbol',
@@ -1644,7 +1627,7 @@ const ClusteredMap = forwardRef<
                                 ['get', 'status'],
                                 'dead',
                                 'sprout-dead',
-                                /* default */ 'sprout-alive',
+                                'sprout-alive',
                             ],
                             'icon-size': 2,
                             'icon-allow-overlap': true,
@@ -1652,7 +1635,6 @@ const ClusteredMap = forwardRef<
                         },
                     });
 
-                    // Click cluster → zoom in
                     map.on('click', 'clusters', (e) => {
                         const features = map.queryRenderedFeatures(e.point, {
                             layers: ['clusters'],
@@ -1671,13 +1653,11 @@ const ClusteredMap = forwardRef<
                             );
                     });
 
-                    // Click individual plant
                     map.on('click', 'unclustered-point', (e) => {
                         const props = e.features?.[0]?.properties;
                         if (props?.id) onPlantClick(Number(props.id));
                     });
 
-                    // Cursors
                     map.on('mouseenter', 'clusters', () => {
                         map.getCanvas().style.cursor = 'pointer';
                     });
@@ -1691,29 +1671,43 @@ const ClusteredMap = forwardRef<
                         map.getCanvas().style.cursor = '';
                     });
 
-                    // General map click for adding plant OR picking coord
                     map.on('click', (e) => {
                         const hits = map.queryRenderedFeatures(e.point, {
                             layers: ['unclustered-point', 'clusters'],
                         });
                         if (hits.length > 0) return;
+                        if (!canEdit) return;
 
                         const coords: [number, number] = [
                             e.lngLat.lng,
                             e.lngLat.lat,
                         ];
 
-                        // If coord-picking mode is active, call the callback
-                        if (pickingRef.current) {
-                            pickingRef.current(coords);
-                            pickingRef.current = null;
-                            setIsPicking(false);
-                            map.getCanvas().style.cursor = '';
-                            return;
-                        }
+                        tempMarkerRef.current?.remove();
+                        const el = document.createElement('div');
+                        el.style.cssText = [
+                            'width:20px',
+                            'height:20px',
+                            'border-radius:50%',
+                            'background:rgba(59,130,246,0.25)',
+                            'border:2.5px solid #3b82f6',
+                            'box-shadow:0 0 0 4px rgba(59,130,246,0.15)',
+                            'animation:map-pulse 1.5s ease-in-out infinite',
+                        ].join(';');
 
-                        // Otherwise open add-plant drawer (if canEdit)
-                        if (canEdit) onMapClick(coords);
+                        if (!document.getElementById('map-pulse-style')) {
+                            const style = document.createElement('style');
+                            style.id = 'map-pulse-style';
+                            style.textContent = `@keyframes map-pulse { 0%,100%{box-shadow:0 0 0 4px rgba(59,130,246,.15)} 50%{box-shadow:0 0 0 8px rgba(59,130,246,.05)} }`;
+                            document.head.appendChild(style);
+                        }
+                        tempMarkerRef.current = new maplibregl.Marker({
+                            element: el,
+                        })
+                            .setLngLat(coords)
+                            .addTo(map);
+
+                        onMapClick(coords);
                     });
                 }
             } finally {
@@ -1740,20 +1734,26 @@ const ClusteredMap = forwardRef<
             .addTo(mapRef.current);
     }, []);
 
-    const startPickingCoord = useCallback(
-        (cb: (coords: [number, number]) => void) => {
-            pickingRef.current = cb;
-            setIsPicking(true);
-            if (mapRef.current)
-                mapRef.current.getCanvas().style.cursor = 'crosshair';
-        },
-        [],
-    );
+    const addTempMarker = useCallback((coords: [number, number]) => {
+        if (!mapRef.current || !mapReadyRef.current) return;
+        tempMarkerRef.current?.remove();
+        const el = document.createElement('div');
+        el.style.cssText = [
+            'width:20px',
+            'height:20px',
+            'border-radius:50%',
+            'background:rgba(59,130,246,0.25)',
+            'border:2.5px solid #3b82f6',
+            'box-shadow:0 0 0 4px rgba(59,130,246,0.15)',
+        ].join(';');
+        tempMarkerRef.current = new maplibregl.Marker({ element: el })
+            .setLngLat(coords)
+            .addTo(mapRef.current);
+    }, []);
 
-    const stopPickingCoord = useCallback(() => {
-        pickingRef.current = null;
-        setIsPicking(false);
-        if (mapRef.current) mapRef.current.getCanvas().style.cursor = '';
+    const removeTempMarker = useCallback(() => {
+        tempMarkerRef.current?.remove();
+        tempMarkerRef.current = null;
     }, []);
 
     useImperativeHandle(ref, () => ({
@@ -1764,8 +1764,8 @@ const ClusteredMap = forwardRef<
         },
         flyTo,
         addMarker,
-        startPickingCoord,
-        stopPickingCoord,
+        addTempMarker,
+        removeTempMarker,
     }));
 
     useEffect(() => {
@@ -1782,7 +1782,6 @@ const ClusteredMap = forwardRef<
         map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
 
         map.on('load', async () => {
-            // Load two marker images: green (alive) and red (dead)
             await Promise.all([
                 loadMapImage(map, 'sprout-alive', markerAlive),
                 loadMapImage(map, 'sprout-dead', markerDead),
@@ -1853,17 +1852,7 @@ const ClusteredMap = forwardRef<
                 </div>
             )}
 
-            {/* Crosshair cursor indicator when picking */}
-            {isPicking && (
-                <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center">
-                    <div className="flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50/95 px-3.5 py-1.5 text-xs font-medium text-blue-700 shadow-md backdrop-blur dark:border-blue-800 dark:bg-blue-950/95 dark:text-blue-300">
-                        <LocateFixed className="h-3.5 w-3.5 animate-pulse" />
-                        {t('garden:show.clickMapToPickCoord')}
-                    </div>
-                </div>
-            )}
-
-            {canEdit && !loading && !isPicking && (
+            {canEdit && !loading && (
                 <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
                     <div className="rounded-full border bg-background/90 px-3.5 py-1.5 text-[11px] font-medium text-muted-foreground shadow backdrop-blur">
                         {t('garden:show.mapClickHint')}
@@ -1875,8 +1864,6 @@ const ClusteredMap = forwardRef<
 });
 
 ClusteredMap.displayName = 'ClusteredMap';
-
-// ─── PlantListPagination ──────────────────────────────────────────────────────
 
 function PlantListPagination({ paginator }: { paginator: Paginator }) {
     const { t } = useTranslation('common');
@@ -1957,17 +1944,13 @@ function PlantListPagination({ paginator }: { paginator: Paginator }) {
     );
 }
 
-// ─── ShowGarden (main page) ───────────────────────────────────────────────────
-
 export default function ShowGarden({ garden: g, plants, filters }: Props) {
     const { t } = useTranslation(['garden', 'common']);
     const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
 
-    // Detail drawer
     const [selectedPlant, setSelectedPlant] = useState<Plant | null>(null);
     const [plantDetailOpen, setPlantDetailOpen] = useState(false);
 
-    // Form drawer (add + edit)
     const [formOpen, setFormOpen] = useState(false);
     const [editingPlant, setEditingPlant] = useState<Plant | null>(null);
     const [pendingCoords, setPendingCoords] = useState<[number, number] | null>(
@@ -1986,7 +1969,6 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
     const totalPlants = plants?.total ?? 0;
     const plantRows = plants?.data ?? [];
 
-    // ── Location helpers ───────────────────────────────────────────────────
     const requestLocation = useCallback(() => {
         if (!navigator.geolocation) return alert('Geolocation not supported.');
         navigator.permissions
@@ -2014,7 +1996,6 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
         );
     }, [locationDenied]);
 
-    // ── Plant click handlers ───────────────────────────────────────────────
     const handlePlantClickFromList = useCallback((plant: Plant) => {
         setSelectedPlant(plant);
         setPlantDetailOpen(true);
@@ -2032,32 +2013,38 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                 setPlantDetailOpen(true);
             } catch (err) {
                 console.error('Failed to fetch plant details:', err);
+                toast.error(t('garden:show.failedToLoadPlant'), {
+                    richColors: true,
+                });
             }
         },
-        [g.id],
+        [g.id, t],
     );
 
-    // ── Map click → open add drawer ────────────────────────────────────────
     const handleMapClick = useCallback((coords: [number, number]) => {
-        // Don't open add drawer if we're in coord-picking mode for edit
         setPendingCoords(coords);
         setEditingPlant(null);
         setFormOpen(true);
     }, []);
 
-    // ── Open edit drawer ───────────────────────────────────────────────────
     const handleEditPlant = useCallback((plant: Plant) => {
         setEditingPlant(plant);
         setPendingCoords(null);
         setFormOpen(true);
     }, []);
 
-    // ── After save ─────────────────────────────────────────────────────────
     const handleSaved = useCallback(() => {
         mapRef.current?.refreshPlants();
+        mapRef.current?.removeTempMarker();
     }, []);
 
-    // ── Search ─────────────────────────────────────────────────────────────
+    const handleFormClose = useCallback(() => {
+        setFormOpen(false);
+        setEditingPlant(null);
+        setPendingCoords(null);
+        mapRef.current?.removeTempMarker();
+    }, []);
+
     const handleSearch = useCallback(
         (value: string) => {
             setSearch(value);
@@ -2081,7 +2068,6 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
         [g.id, filters?.per_page],
     );
 
-    // Derive initialData and existingImageUrl for PlantFormDrawer
     const editFormData = editingPlant ? plantToForm(editingPlant) : null;
     const editImageUrl = editingPlant?.image_url ?? null;
 
@@ -2089,7 +2075,6 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
         <>
             <Head title={g.name} />
 
-            {/* Location dialog */}
             <AlertDialog
                 open={locationDialogOpen}
                 onOpenChange={setLocationDialogOpen}
@@ -2127,7 +2112,6 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
             </AlertDialog>
 
             <div className="flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden">
-                {/* Top bar */}
                 <div className="flex shrink-0 items-center justify-between border-b bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
                     <div className="min-w-0">
                         <h1 className="truncate text-base font-semibold tracking-tight">
@@ -2185,7 +2169,6 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                     </div>
                 </div>
 
-                {/* Toolbar */}
                 <div className="flex shrink-0 items-center gap-2 border-b bg-background/80 px-4 py-2 backdrop-blur sm:px-6">
                     <TooltipProvider delayDuration={300}>
                         <div className="flex items-center gap-0.5 rounded-md border bg-muted/50 p-0.5">
@@ -2252,7 +2235,6 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                     )}
                 </div>
 
-                {/* Content */}
                 <div className="flex flex-1 overflow-hidden">
                     {viewMode === 'map' ? (
                         <>
@@ -2461,7 +2443,6 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                 </div>
             </div>
 
-            {/* Plant detail drawer (read-only) */}
             <PlantDetailDrawer
                 plant={selectedPlant}
                 open={plantDetailOpen}
@@ -2473,21 +2454,15 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                 canEdit={canEdit}
             />
 
-            {/* Unified plant form drawer (add + edit) */}
             <PlantFormDrawer
                 open={formOpen}
-                onClose={() => {
-                    setFormOpen(false);
-                    setEditingPlant(null);
-                    setPendingCoords(null);
-                }}
+                onClose={handleFormClose}
                 gardenId={g.id}
                 plantId={editingPlant?.id ?? null}
                 initialCoords={pendingCoords}
                 initialData={editFormData}
                 existingImageUrl={editImageUrl}
                 onSaved={handleSaved}
-                mapRef={mapRef}
             />
         </>
     );
