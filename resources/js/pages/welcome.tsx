@@ -640,7 +640,7 @@ export default function Welcome() {
                     <Separator className="my-8" />
                     <div className="flex flex-col items-center justify-between text-sm text-muted-foreground md:flex-row">
                         <p>
-                            &copy; 2024 Fopis.{' '}
+                            &copy; {new Date().getFullYear()} Fopis.{' '}
                             {t('common:footer.allRightsReserved')}
                         </p>
                         <div className="mt-4 flex gap-4 md:mt-0">

@@ -17,6 +17,14 @@ import {
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+} from '@/components/ui/command';
+import {
     Drawer,
     DrawerClose,
     DrawerContent,
@@ -60,8 +68,10 @@ import { cn } from '@/lib/utils';
 import {
     CalendarDays,
     CalendarIcon,
+    Check,
     ChevronLeft,
     ChevronRight,
+    ChevronsUpDown,
     Crosshair,
     Image as ImageIcon,
     Info,
@@ -100,9 +110,16 @@ interface GardenMember {
     user: { id: number; name: string; email: string };
 }
 
+interface Commodity {
+    id: number;
+    name: string;
+}
+
 interface Plant {
     id: number;
     plant_code: string;
+    commodity_id: number | null;
+    commodity?: Commodity | null;
     variety: string | null;
     block: string | null;
     sub_block: string | null;
@@ -163,6 +180,7 @@ interface Props {
     garden: GardenDetail;
     plants: Paginator;
     filters: { search?: string; per_page?: number };
+    commodities: Commodity[];
 }
 
 interface ClusteredMapHandle {
@@ -317,8 +335,109 @@ function DatePickerField({
     );
 }
 
+/**
+ * Combobox with search for long lists (e.g. 56 commodities).
+ * Uses Popover + Command pattern from shadcn/ui.
+ */
+function CommodityCombobox({
+    commodities,
+    value,
+    onChange,
+    label,
+    placeholder,
+    searchPlaceholder,
+    error,
+}: {
+    commodities: Commodity[];
+    value: string;
+    onChange: (v: string) => void;
+    label: string;
+    placeholder: string;
+    searchPlaceholder: string;
+    error?: string;
+}) {
+    const [open, setOpen] = useState(false);
+    const selected = commodities.find((c) => String(c.id) === value);
+
+    return (
+        <div className="grid gap-1.5">
+            <Label className="text-xs">{label}</Label>
+            <Popover open={open} onOpenChange={setOpen}>
+                <PopoverTrigger asChild>
+                    <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={open}
+                        className={cn(
+                            'h-8 w-full justify-between text-sm font-normal',
+                            !selected && 'text-muted-foreground',
+                            error && 'border-destructive',
+                        )}
+                    >
+                        <span className="truncate">
+                            {selected ? selected.name : placeholder}
+                        </span>
+                        <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                    </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                    className="w-[--radix-popover-trigger-width] p-0"
+                    align="start"
+                >
+                    <Command>
+                        <CommandInput
+                            placeholder={searchPlaceholder}
+                            className="h-8 text-sm"
+                        />
+                        <CommandList className="max-h-56">
+                            <CommandEmpty>Tidak ditemukan.</CommandEmpty>
+                            <CommandGroup>
+                                {value && (
+                                    <CommandItem
+                                        value="__clear__"
+                                        onSelect={() => {
+                                            onChange('');
+                                            setOpen(false);
+                                        }}
+                                        className="text-muted-foreground italic"
+                                    >
+                                        <X className="mr-2 h-3.5 w-3.5" />
+                                        Hapus pilihan
+                                    </CommandItem>
+                                )}
+                                {commodities.map((c) => (
+                                    <CommandItem
+                                        key={c.id}
+                                        value={c.name}
+                                        onSelect={() => {
+                                            onChange(String(c.id));
+                                            setOpen(false);
+                                        }}
+                                    >
+                                        <Check
+                                            className={cn(
+                                                'mr-2 h-3.5 w-3.5',
+                                                value === String(c.id)
+                                                    ? 'opacity-100'
+                                                    : 'opacity-0',
+                                            )}
+                                        />
+                                        {c.name}
+                                    </CommandItem>
+                                ))}
+                            </CommandGroup>
+                        </CommandList>
+                    </Command>
+                </PopoverContent>
+            </Popover>
+            {error && <p className="text-[11px] text-destructive">{error}</p>}
+        </div>
+    );
+}
+
 interface PlantFormData {
     plant_code: string;
+    commodity_id: string;
     variety: string;
     block: string;
     sub_block: string;
@@ -343,6 +462,7 @@ interface PlantFormData {
 
 const EMPTY_FORM: PlantFormData = {
     plant_code: '',
+    commodity_id: '',
     variety: '',
     block: '',
     sub_block: '',
@@ -368,6 +488,7 @@ const EMPTY_FORM: PlantFormData = {
 function plantToForm(p: Plant): PlantFormData {
     return {
         plant_code: p.plant_code,
+        commodity_id: p.commodity_id ? String(p.commodity_id) : '',
         variety: p.variety ?? '',
         block: p.block ?? '',
         sub_block: p.sub_block ?? '',
@@ -533,12 +654,14 @@ function GardenInfoPanel({ g }: { g: GardenDetail }) {
 function PlantDetailDrawer({
     plant,
     open,
+    loading,
     onClose,
     onEdit,
     canEdit,
 }: {
     plant: Plant | null;
     open: boolean;
+    loading: boolean;
     onClose: () => void;
     onEdit: (plant: Plant) => void;
     canEdit: boolean;
@@ -549,10 +672,47 @@ function PlantDetailDrawer({
         <Drawer open={open} onOpenChange={(v) => !v && onClose()} modal={true}>
             <DrawerContent>
                 <div className="mx-auto w-full max-w-lg">
-                    {!plant ? (
-                        <div className="flex items-center justify-center py-12">
-                            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                        </div>
+                    {loading || !plant ? (
+                        <>
+                            {/* Skeleton header */}
+                            <div className="flex items-start justify-between gap-3 px-4 pt-5 pb-3">
+                                <div className="flex min-w-0 flex-col gap-2">
+                                    <div className="h-5 w-28 animate-pulse rounded-md bg-muted" />
+                                    <div className="h-3.5 w-20 animate-pulse rounded-md bg-muted" />
+                                </div>
+                                <div className="h-6 w-16 animate-pulse rounded-full bg-muted" />
+                            </div>
+                            <div className="mx-4 h-px bg-border" />
+                            {/* Skeleton body */}
+                            <div className="grid gap-4 px-4 py-4">
+                                <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
+                                    <div className="mb-2 h-3 w-20 animate-pulse rounded bg-muted" />
+                                    <div className="flex gap-6">
+                                        <div className="h-4 w-16 animate-pulse rounded bg-muted" />
+                                        <div className="h-4 w-16 animate-pulse rounded bg-muted" />
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-3">
+                                    {[...Array(6)].map((_, i) => (
+                                        <div
+                                            key={i}
+                                            className="flex flex-col gap-1"
+                                        >
+                                            <div className="h-2.5 w-14 animate-pulse rounded bg-muted" />
+                                            <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                    <div className="h-2.5 w-16 animate-pulse rounded bg-muted" />
+                                    <div className="h-4 w-full animate-pulse rounded bg-muted" />
+                                    <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
+                                </div>
+                            </div>
+                            <div className="px-4 pb-6">
+                                <div className="h-8 w-full animate-pulse rounded-md bg-muted" />
+                            </div>
+                        </>
                     ) : (
                         <>
                             <DrawerHeader className="pb-2">
@@ -561,6 +721,11 @@ function PlantDetailDrawer({
                                         <DrawerTitle>
                                             {plant.plant_code}
                                         </DrawerTitle>
+                                        {plant.commodity && (
+                                            <DrawerDescription className="mt-0.5 font-medium text-foreground/70">
+                                                {plant.commodity.name}
+                                            </DrawerDescription>
+                                        )}
                                         {plant.variety && (
                                             <DrawerDescription className="mt-0.5">
                                                 {plant.variety}
@@ -804,6 +969,7 @@ function PlantFormDrawer({
     initialData,
     existingImageUrl,
     onSaved,
+    commodities,
 }: {
     open: boolean;
     onClose: () => void;
@@ -813,10 +979,26 @@ function PlantFormDrawer({
     initialData: PlantFormData | null;
     existingImageUrl?: string | null;
     onSaved?: () => void;
+    commodities: Commodity[];
 }) {
     const { t } = useTranslation(['garden', 'common']);
     const isEdit = !!plantId;
     const [isGettingLocation, setIsGettingLocation] = useState(false);
+    const [isLoadingCode, setIsLoadingCode] = useState(false);
+
+    const fetchNextCode = useCallback(async () => {
+        if (isEdit) return;
+        setIsLoadingCode(true);
+        try {
+            const res = await fetch(`/gardens/${gardenId}/plants/next-code`);
+            if (res.ok) {
+                const { plant_code } = await res.json();
+                setData('plant_code', plant_code);
+            }
+        } finally {
+            setIsLoadingCode(false);
+        }
+    }, [gardenId, isEdit]);
 
     const { data, setData, processing, errors, reset, transform, submit } =
         useForm<PlantFormData>(EMPTY_FORM);
@@ -831,6 +1013,7 @@ function PlantFormDrawer({
             );
         } else {
             reset();
+            fetchNextCode();
             if (initialCoords) {
                 setData('latitude', initialCoords[1].toFixed(6));
                 setData('longitude', initialCoords[0].toFixed(6));
@@ -930,6 +1113,7 @@ function PlantFormDrawer({
         transform((d) => {
             const fd = new FormData();
             fd.append('plant_code', d.plant_code);
+            if (d.commodity_id) fd.append('commodity_id', d.commodity_id);
             if (d.variety) fd.append('variety', d.variety);
             if (d.block) fd.append('block', d.block);
             if (d.sub_block) fd.append('sub_block', d.sub_block);
@@ -1024,31 +1208,66 @@ function PlantFormDrawer({
 
                 <div className="flex-1 overflow-y-auto px-6 py-4">
                     <div className="grid gap-3">
+                        {/* Plant Code - auto generated, read-only for new */}
                         <div className="grid gap-1.5">
                             <Label htmlFor="pf_plant_code" className="text-xs">
                                 {t('garden:show.plantCode')}{' '}
                                 <span className="text-destructive">*</span>
                             </Label>
-                            <Input
-                                id="pf_plant_code"
-                                placeholder={t(
-                                    'garden:show.plantCodePlaceholder',
+                            <div className="relative">
+                                <Input
+                                    id="pf_plant_code"
+                                    placeholder={
+                                        isLoadingCode
+                                            ? t('common:loading')
+                                            : t(
+                                                  'garden:show.plantCodePlaceholder',
+                                              )
+                                    }
+                                    value={data.plant_code}
+                                    onChange={(e) =>
+                                        setData('plant_code', e.target.value)
+                                    }
+                                    readOnly
+                                    className={cn(
+                                        'h-8 font-mono text-sm',
+                                        'cursor-default bg-muted/40',
+                                        errors.plant_code &&
+                                            'border-destructive',
+                                    )}
+                                />
+                                {isLoadingCode && (
+                                    <Loader2 className="absolute top-2 right-2.5 h-4 w-4 animate-spin text-muted-foreground" />
                                 )}
-                                value={data.plant_code}
-                                onChange={(e) =>
-                                    setData('plant_code', e.target.value)
-                                }
-                                className={cn(
-                                    'h-8 text-sm',
-                                    errors.plant_code && 'border-destructive',
-                                )}
-                            />
+                            </div>
+                            {!isEdit && (
+                                <p className="text-[10px] text-muted-foreground">
+                                    {t(
+                                        'garden:show.plantCodeAutoGenerated',
+                                        'Kode dibuat otomatis & unik per kebun',
+                                    )}
+                                </p>
+                            )}
                             {errors.plant_code && (
                                 <p className="text-[11px] text-destructive">
                                     {errors.plant_code}
                                 </p>
                             )}
                         </div>
+
+                        {/* Commodity — combobox with search */}
+                        <CommodityCombobox
+                            commodities={commodities ?? []}
+                            value={data.commodity_id}
+                            onChange={(v) => setData('commodity_id', v)}
+                            label={t('garden:show.commodity', 'Komoditas')}
+                            placeholder={t(
+                                'garden:show.commodityPlaceholder',
+                                'Pilih komoditas...',
+                            )}
+                            searchPlaceholder="Cari komoditas..."
+                            error={errors.commodity_id}
+                        />
 
                         <div className="grid grid-cols-2 gap-3">
                             <div className="grid gap-1.5">
@@ -1134,20 +1353,35 @@ function PlantFormDrawer({
                                 >
                                     {t('garden:show.propagation')}
                                 </Label>
-                                <Input
-                                    id="pf_propagation"
-                                    placeholder={t(
-                                        'garden:show.propagationPlaceholder',
-                                    )}
-                                    value={data.propagation_method}
-                                    onChange={(e) =>
-                                        setData(
-                                            'propagation_method',
-                                            e.target.value,
-                                        )
+                                <Select
+                                    value={data.propagation_method || undefined}
+                                    onValueChange={(v) =>
+                                        setData('propagation_method', v)
                                     }
-                                    className="h-8 text-sm"
-                                />
+                                >
+                                    <SelectTrigger
+                                        className="h-8 text-sm"
+                                        id="pf_propagation"
+                                    >
+                                        <SelectValue
+                                            placeholder={t(
+                                                'garden:show.propagationPlaceholder',
+                                                'Pilih cara perbanyakan...',
+                                            )}
+                                        />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="Biji">
+                                            Biji
+                                        </SelectItem>
+                                        <SelectItem value="Sambung/ Okulasi">
+                                            Sambung/ Okulasi
+                                        </SelectItem>
+                                        <SelectItem value="Cangkokan/ Stek/ Anakan">
+                                            Cangkokan/ Stek/ Anakan
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
                             <div className="grid gap-1.5">
                                 <Label
@@ -1240,7 +1474,7 @@ function PlantFormDrawer({
                                 value={data.status || undefined}
                                 onValueChange={(v) => setData('status', v)}
                             >
-                                <SelectTrigger className="h-8 text-sm">
+                                <SelectTrigger className="h-8 w-full text-sm">
                                     <SelectValue
                                         placeholder={t(
                                             'garden:show.statusPlaceholder',
@@ -1944,12 +2178,18 @@ function PlantListPagination({ paginator }: { paginator: Paginator }) {
     );
 }
 
-export default function ShowGarden({ garden: g, plants, filters }: Props) {
+export default function ShowGarden({
+    garden: g,
+    plants,
+    filters,
+    commodities,
+}: Props) {
     const { t } = useTranslation(['garden', 'common']);
     const [viewMode, setViewMode] = useState<'map' | 'list'>('map');
 
     const [selectedPlant, setSelectedPlant] = useState<Plant | null>(null);
     const [plantDetailOpen, setPlantDetailOpen] = useState(false);
+    const [plantDetailLoading, setPlantDetailLoading] = useState(false);
 
     const [formOpen, setFormOpen] = useState(false);
     const [editingPlant, setEditingPlant] = useState<Plant | null>(null);
@@ -1997,12 +2237,23 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
     }, [locationDenied]);
 
     const handlePlantClickFromList = useCallback((plant: Plant) => {
-        setSelectedPlant(plant);
+        // List already has the data, but we still show the drawer immediately
+        setSelectedPlant(null);
+        setPlantDetailLoading(true);
         setPlantDetailOpen(true);
+        // Simulate a brief tick so the drawer opens smoothly before populating
+        setTimeout(() => {
+            setSelectedPlant(plant);
+            setPlantDetailLoading(false);
+        }, 0);
     }, []);
 
     const handlePlantClickFromMap = useCallback(
         async (plantId: number) => {
+            // Open drawer immediately with loading state
+            setSelectedPlant(null);
+            setPlantDetailLoading(true);
+            setPlantDetailOpen(true);
             try {
                 const response = await fetch(
                     `/gardens/${g.id}/plants/${plantId}`,
@@ -2010,12 +2261,14 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                 if (!response.ok) throw new Error('Failed to fetch');
                 const plant = await response.json();
                 setSelectedPlant(plant);
-                setPlantDetailOpen(true);
             } catch (err) {
                 console.error('Failed to fetch plant details:', err);
+                setPlantDetailOpen(false);
                 toast.error(t('garden:show.failedToLoadPlant'), {
                     richColors: true,
                 });
+            } finally {
+                setPlantDetailLoading(false);
             }
         },
         [g.id, t],
@@ -2309,6 +2562,12 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                                                 'garden:show.plantCode',
                                                             )}
                                                         </TableHead>
+                                                        <TableHead className="hidden text-[10px] font-medium tracking-wider uppercase sm:table-cell">
+                                                            {t(
+                                                                'garden:show.commodity',
+                                                                'Komoditas',
+                                                            )}
+                                                        </TableHead>
                                                         <TableHead className="text-[10px] font-medium tracking-wider uppercase">
                                                             {t(
                                                                 'garden:show.variety',
@@ -2352,6 +2611,14 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                                                                 {
                                                                     plant.plant_code
                                                                 }
+                                                            </TableCell>
+                                                            <TableCell className="hidden text-sm sm:table-cell">
+                                                                {plant.commodity
+                                                                    ?.name ?? (
+                                                                    <span className="text-muted-foreground/40">
+                                                                        —
+                                                                    </span>
+                                                                )}
                                                             </TableCell>
                                                             <TableCell className="text-sm">
                                                                 {plant.variety ?? (
@@ -2446,9 +2713,11 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
             <PlantDetailDrawer
                 plant={selectedPlant}
                 open={plantDetailOpen}
+                loading={plantDetailLoading}
                 onClose={() => {
                     setPlantDetailOpen(false);
                     setSelectedPlant(null);
+                    setPlantDetailLoading(false);
                 }}
                 onEdit={handleEditPlant}
                 canEdit={canEdit}
@@ -2463,6 +2732,7 @@ export default function ShowGarden({ garden: g, plants, filters }: Props) {
                 initialData={editFormData}
                 existingImageUrl={editImageUrl}
                 onSaved={handleSaved}
+                commodities={commodities}
             />
         </>
     );

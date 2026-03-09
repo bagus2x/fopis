@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property int $id
  * @property int $garden_id
  * @property int $submitted_by
+ * @property int|null $commodity_id
  * @property string $plant_code
  * @property string|null $variety
  * @property string|null $block
@@ -36,6 +37,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * @property-read Garden $garden
  * @property-read User $submitter
+ * @property-read Commodity|null $commodity
  */
 class Plant extends Model
 {
@@ -44,6 +46,7 @@ class Plant extends Model
     protected $fillable = [
         'garden_id',
         'submitted_by',
+        'commodity_id',
         'plant_code',
         'variety',
         'block',
@@ -63,13 +66,13 @@ class Plant extends Model
         'parent_tree_class',
         'registration_number',
         'parent_tree_notes',
-        'image_path'
+        'image_path',
     ];
 
     protected $casts = [
-        'latitude' => 'decimal:8',
-        'longitude' => 'decimal:8',
-        'planting_year' => 'integer',
+        'latitude'          => 'decimal:8',
+        'longitude'         => 'decimal:8',
+        'planting_year'     => 'integer',
         'status_change_date' => 'date',
     ];
 
@@ -81,5 +84,24 @@ class Plant extends Model
     public function submitter(): BelongsTo
     {
         return $this->belongsTo(User::class, 'submitted_by');
+    }
+
+    public function commodity(): BelongsTo
+    {
+        return $this->belongsTo(Commodity::class);
+    }
+
+    /**
+     * Generate the next sequential plant_code for a given garden.
+     * Format: <garden_id>-<padded_sequence>  e.g. "12-0001"
+     * Guaranteed unique within the garden.
+     */
+    public static function nextCodeForGarden(int $gardenId): string
+    {
+        $max = static::where('garden_id', $gardenId)
+            ->selectRaw('MAX(CAST(SUBSTRING_INDEX(plant_code, \'-\', -1) AS UNSIGNED)) as max_seq')
+            ->value('max_seq') ?? 0;
+
+        return $gardenId . '-' . str_pad($max + 1, 4, '0', STR_PAD_LEFT);
     }
 }

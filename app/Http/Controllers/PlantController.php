@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Commodity;
 use App\Models\Garden;
 use App\Models\Plant;
 use Illuminate\Http\Request;
@@ -19,7 +20,7 @@ class PlantController extends Controller
 
         abort_if($plant->garden_id != $garden->id, 404);
 
-        $plantData = $plant->toArray();
+        $plantData = $plant->load('commodity')->toArray();
 
         if ($plant->image_path) {
             $plantData['image_url'] = asset('storage/' . $plant->image_path);
@@ -52,12 +53,43 @@ class PlantController extends Controller
         return response()->json($plants);
     }
 
+    /**
+     * Return all commodities for use in dropdowns.
+     */
+    public function commodities()
+    {
+        return response()->json(
+            Commodity::orderBy('name')->get(['id', 'name'])
+        );
+    }
+
+    /**
+     * Generate and return the next plant code for the given garden.
+     */
+    public function nextCode(Garden $garden)
+    {
+        $this->authorizeGarden($garden);
+
+        return response()->json([
+            'plant_code' => Plant::nextCodeForGarden($garden->id),
+        ]);
+    }
+
     public function store(Request $request, Garden $garden)
     {
         $this->authorizeGarden($garden, ['OWNER', 'MANAGER']);
 
         $validated = $request->validate([
-            'plant_code'           => 'required|string|max:100',
+            'plant_code'           => [
+                'required',
+                'string',
+                'max:100',
+                // Unique within the same garden
+                \Illuminate\Validation\Rule::unique('plants')->where(
+                    fn ($q) => $q->where('garden_id', $garden->id)
+                ),
+            ],
+            'commodity_id'         => 'nullable|exists:commodities,id',
             'variety'              => 'nullable|string|max:255',
             'block'                => 'nullable|string|max:100',
             'sub_block'            => 'nullable|string|max:100',
@@ -100,7 +132,16 @@ class PlantController extends Controller
         abort_if($plant->garden_id !== $garden->id, 404);
 
         $validated = $request->validate([
-            'plant_code'           => 'required|string|max:100',
+            'plant_code'           => [
+                'required',
+                'string',
+                'max:100',
+                // Unique within same garden, ignoring current plant
+                \Illuminate\Validation\Rule::unique('plants')
+                    ->where(fn ($q) => $q->where('garden_id', $garden->id))
+                    ->ignore($plant->id),
+            ],
+            'commodity_id'         => 'nullable|exists:commodities,id',
             'variety'              => 'nullable|string|max:255',
             'block'                => 'nullable|string|max:100',
             'sub_block'            => 'nullable|string|max:100',

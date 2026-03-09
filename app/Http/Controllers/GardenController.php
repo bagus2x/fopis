@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Commodity;
 use App\Models\Garden;
 use App\Models\GardenMember;
 use App\Models\User;
@@ -134,12 +135,15 @@ class GardenController extends Controller
             ->latest()
             ->paginate($perPage)
             ->withQueryString();
+        
+        $commodities = Commodity::all();
 
         $garden->load('members.user');
 
         return Inertia::render('garden/show', [
             'garden'  => $this->appendGeoJson($garden),
             'plants'  => $plants,
+            'commodities' => $commodities,
             'filters' => [
                 'search'   => $search,
                 'per_page' => $perPage,
